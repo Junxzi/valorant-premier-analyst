@@ -7,6 +7,7 @@ import { PlayerBio } from "@/components/PlayerBio";
 import { AvatarUpload } from "@/components/AvatarUpload";
 import { Card } from "@/components/Card";
 import { resultPill } from "@/components/Pill";
+import { VodCell } from "@/components/VodCell";
 import { ApiError, fetchPlayer } from "@/lib/api";
 import {
   formatGameStart,
@@ -210,6 +211,7 @@ function RecentMatches({ matches }: { matches: PlayerMatchEntry[] }) {
                 <Th className="w-14 text-right">D</Th>
                 <Th className="w-14 text-right">A</Th>
                 <Th className="w-16 text-right">ACS</Th>
+                <Th className="w-14 text-right">VOD</Th>
                 <Th className="w-36">Date</Th>
               </tr>
             </thead>
@@ -267,6 +269,9 @@ function PlayerMatchRow({ match }: { match: PlayerMatchEntry }) {
       >
         {formatNumber(match.acs, 0)}
       </LinkTd>
+      <td className="px-4 py-2.5 text-right align-middle">
+        <VodCell url={match.vod_url} />
+      </td>
       <LinkTd href={href} className="text-muted tabular-nums">
         {formatGameStart(match.game_start)}
       </LinkTd>

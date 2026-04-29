@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ..deps import db_path, open_duckdb
+from ..vods import load_vods
 from ..schemas import (
     MapWinrate,
     OpponentSummary,
@@ -80,11 +81,14 @@ def _fetch_recent_matches(
         params.append(limit)
 
     rows = con.execute(sql, params).fetchall()  # type: ignore[attr-defined]
+    vods = load_vods()
     out: list[RecentMatch] = []
     for r in rows:
+        mid = str(r[0])
         out.append(
             RecentMatch(
-                match_id=str(r[0]),
+                match_id=mid,
+                vod_url=vods.get(mid),
                 map_name=r[1],
                 mode=r[2],
                 queue=r[3],
@@ -605,12 +609,15 @@ def get_team_map_stats(
         # Index per-match details by map_name
         from ..schemas import TeamMapMatchDetail  # noqa: PLC0415
 
+        vods = load_vods()
         matches_by_map: dict[str, list[TeamMapMatchDetail]] = defaultdict(list)
         for mr in match_detail_rows:
             map_key = mr[1] or ""
+            mid = str(mr[0])
             matches_by_map[map_key].append(
                 TeamMapMatchDetail(
-                    match_id=str(mr[0]),
+                    match_id=mid,
+                    vod_url=vods.get(mid),
                     game_start=int(mr[2]) if mr[2] is not None else None,
                     has_won=bool(mr[3]) if mr[3] is not None else None,
                     rounds_won=int(mr[4]) if mr[4] is not None else None,

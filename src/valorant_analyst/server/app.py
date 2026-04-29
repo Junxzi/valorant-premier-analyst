@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from .routes import health, matches, players, sync, teams
+from .routes import health, matches, players, sync, teams, vods
 
 
 def _allowed_origins() -> list[str]:
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(matches.router, prefix="/api")
     app.include_router(players.router, prefix="/api")
     app.include_router(sync.router, prefix="/api")
+    app.include_router(vods.router, prefix="/api")
 
     @app.get("/", include_in_schema=False)
     async def redirect_root_docs() -> RedirectResponse:

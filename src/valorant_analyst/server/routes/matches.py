@@ -14,6 +14,7 @@ from ..schemas import (
     RoundEntry,
     RoundEconomyEntry,
 )
+from ..vods import vod_url_for
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
@@ -175,6 +176,7 @@ def get_match(
 
         return MatchDetail(
             match_id=str(match_row[0]),
+            vod_url=vod_url_for(match_id),
             map_name=match_row[1],
             mode=match_row[2],
             queue=match_row[3],

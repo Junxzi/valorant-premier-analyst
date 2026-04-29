@@ -16,6 +16,7 @@ from ..schemas import (
     PlayerSummary,
     PlayerTeamAffiliation,
 )
+from ..vods import load_vods
 
 router = APIRouter(prefix="/players", tags=["players"])
 
@@ -325,6 +326,7 @@ def get_player(
             ''',
             [puuid, recent_limit],
         ).fetchall()
+        vods = load_vods()
         recent_matches: list[PlayerMatchEntry] = []
         for r in recent_rows:
             score = _safe_int(r[8])
@@ -332,9 +334,11 @@ def get_player(
             total_rounds = _safe_int(r[10]) or 0
             kills = _safe_int(r[5])
             deaths = _safe_int(r[6])
+            mid = str(r[0])
             recent_matches.append(
                 PlayerMatchEntry(
-                    match_id=str(r[0]),
+                    match_id=mid,
+                    vod_url=vods.get(mid),
                     map_name=r[1],
                     game_start=_safe_int(r[2]),
                     team=r[3],

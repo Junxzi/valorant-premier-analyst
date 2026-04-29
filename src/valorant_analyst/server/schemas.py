@@ -38,6 +38,7 @@ class OpponentSummary(BaseModel):
 
 class RecentMatch(BaseModel):
     match_id: str
+    vod_url: str | None = None
     map_name: str | None
     mode: str | None
     queue: str | None
@@ -134,6 +135,7 @@ class MatchPlayerStat(BaseModel):
 
 class MatchDetail(BaseModel):
     match_id: str
+    vod_url: str | None = None
     map_name: str | None
     mode: str | None
     queue: str | None
@@ -227,6 +229,7 @@ class TeamMapMatchDetail(BaseModel):
     """Single match result used in the expanded map row."""
 
     match_id: str
+    vod_url: str | None = None
     game_start: int | None
     has_won: bool | None
     rounds_won: int | None
@@ -330,6 +333,7 @@ class PlayerMatchEntry(BaseModel):
     """A single match the player participated in."""
 
     match_id: str
+    vod_url: str | None = None
     map_name: str | None
     game_start: int | None
     team: str | None = Field(description="Red/Blue side the player was on.")

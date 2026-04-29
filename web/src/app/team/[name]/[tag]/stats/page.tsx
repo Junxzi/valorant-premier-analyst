@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 
 import { AgentBadge } from "@/components/AgentBadge";
 import { resultPill } from "@/components/Pill";
+import { VodCell } from "@/components/VodCell";
 import { fetchTeamMapStats } from "@/lib/api";
 import type { TeamMapStat, TeamMapMatchDetail } from "@/lib/api";
 import { formatGameStart, formatPercent, formatScore, teamDisplayName } from "@/lib/format";
@@ -196,9 +197,12 @@ function MatchDetailRow({ match }: { match: TeamMapMatchDetail }) {
 
   return (
     <tr className="border-b border-border/40 bg-bg-elevated/40 text-xs hover:bg-panel-hover/60">
-      {/* Date */}
-      <Td className="pl-6 text-muted tabular-nums">
-        {formatGameStart(match.game_start)}
+      {/* Date + optional VOD */}
+      <Td className="pl-6 text-muted tabular-nums align-top">
+        <div className="flex flex-col gap-1">
+          <span>{formatGameStart(match.game_start)}</span>
+          <VodCell url={match.vod_url} />
+        </div>
       </Td>
 
       {/* Expand cell: result pill + score + opponent */}

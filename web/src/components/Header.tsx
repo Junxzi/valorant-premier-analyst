@@ -30,6 +30,9 @@ export function Header() {
           <Link className="hover:text-text" href={teamHref}>
             Home
           </Link>
+          <Link className="hover:text-text" href="/settings/vods">
+            VOD
+          </Link>
           <SyncButton />
           <a
             className="hover:text-text"

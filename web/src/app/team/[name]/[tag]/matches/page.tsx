@@ -3,11 +3,11 @@ import { notFound } from "next/navigation";
 
 import { Card } from "@/components/Card";
 import { resultPill } from "@/components/Pill";
+import { VodCell } from "@/components/VodCell";
 import { ApiError, fetchTeamMatches } from "@/lib/api";
 import {
   formatGameStart,
   formatScore,
-  shortMatchId,
   teamDisplayName,
 } from "@/lib/format";
 import type { RecentMatch } from "@/lib/api";
@@ -60,7 +60,7 @@ export default async function TeamMatchesPage({ params }: PageProps) {
                   <Th className="w-32">Map</Th>
                   <Th className="w-28">Mode</Th>
                   <Th className="w-44">Date</Th>
-                  <Th className="w-28 text-right">Match</Th>
+                  <Th className="w-20 text-right">VOD</Th>
                 </tr>
               </thead>
               <tbody>
@@ -106,14 +106,9 @@ function MatchRow({ match }: { match: RecentMatch }) {
       <LinkTd href={href} className="text-muted tabular-nums">
         {formatGameStart(match.game_start)}
       </LinkTd>
-      <LinkTd href={href} className="text-right">
-        <span
-          className="font-mono text-xs text-muted group-hover:text-accent"
-          title={match.match_id}
-        >
-          {shortMatchId(match.match_id)}
-        </span>
-      </LinkTd>
+      <td className="px-4 py-2.5 text-right align-middle">
+        <VodCell url={match.vod_url} />
+      </td>
     </tr>
   );
 }

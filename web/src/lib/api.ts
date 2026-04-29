@@ -42,6 +42,7 @@ export type OpponentSummary = {
 
 export type RecentMatch = {
   match_id: string;
+  vod_url: string | null;
   map_name: string | null;
   mode: string | null;
   queue: string | null;
@@ -125,6 +126,7 @@ export type MatchPlayerStat = {
 
 export type MatchDetail = {
   match_id: string;
+  vod_url: string | null;
   map_name: string | null;
   mode: string | null;
   queue: string | null;
@@ -189,6 +191,7 @@ export type TeamMapAgentComp = {
 
 export type TeamMapMatchDetail = {
   match_id: string;
+  vod_url: string | null;
   game_start: number | null;
   has_won: boolean | null;
   rounds_won: number | null;
@@ -277,6 +280,7 @@ export type PlayerMapStat = {
 
 export type PlayerMatchEntry = {
   match_id: string;
+  vod_url: string | null;
   map_name: string | null;
   game_start: number | null;
   team: string | null;
@@ -323,6 +327,23 @@ export type PlayerOverview = {
   maps: PlayerMapStat[];
   recent_matches: PlayerMatchEntry[];
 };
+
+/** GET/PUT `/api/vods` — persisted to `data/vods.json`. */
+export type VodsEnvelope = {
+  urls: Record<string, string>;
+};
+
+export async function fetchVods(): Promise<VodsEnvelope> {
+  return request<VodsEnvelope>("/api/vods");
+}
+
+export async function saveVods(urls: Record<string, string>): Promise<VodsEnvelope> {
+  return request<VodsEnvelope>("/api/vods", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ urls }),
+  });
+}
 
 export class ApiError extends Error {
   status: number;
