@@ -43,21 +43,22 @@ export default function TeamStatsPage() {
   }
 
   return (
-    <div className="rounded-md border border-border bg-panel overflow-x-auto">
-      <table className="min-w-full text-sm">
-        <thead className="text-[10px] font-bold uppercase tracking-wider text-muted">
-          <tr className="border-b border-border">
-            <Th rowSpan={2} className="w-36 text-left">Map (#)</Th>
-            <Th rowSpan={2} className="w-28">Expand</Th>
-            <Th rowSpan={2} className="w-16 text-center">Win%</Th>
-            <Th rowSpan={2} className="w-10 text-center text-win">W</Th>
-            <Th rowSpan={2} className="w-10 text-center text-loss">L</Th>
-            <Th colSpan={2} className="border-l border-border/60 text-center">1st Half</Th>
-            <Th colSpan={3} className="border-l border-border/60 text-center bg-rose-500/10 text-rose-400">ATK</Th>
-            <Th colSpan={3} className="border-l border-border/60 text-center bg-sky-500/10 text-sky-400">DEF</Th>
-            <Th rowSpan={2} className="border-l border-border/60 text-left pl-4">Agent Compositions</Th>
-          </tr>
-          <tr className="border-b border-border">
+    <div className="rounded-md border border-border bg-panel">
+      <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] pb-px">
+        <table className="min-w-max w-full text-sm">
+          <thead className="text-[10px] font-bold uppercase tracking-wider text-muted">
+            <tr className="border-b border-border">
+              <Th rowSpan={2} className="min-w-[7.5rem] text-left whitespace-nowrap">Map (#)</Th>
+              <Th rowSpan={2} className="min-w-[7.25rem] whitespace-nowrap">Expand</Th>
+              <Th rowSpan={2} className="min-w-[3.25rem] text-center whitespace-nowrap">Win%</Th>
+              <Th rowSpan={2} className="w-10 text-center whitespace-nowrap text-win">W</Th>
+              <Th rowSpan={2} className="w-10 text-center whitespace-nowrap text-loss">L</Th>
+              <Th colSpan={2} className="border-l border-border/60 text-center whitespace-nowrap">1st Half</Th>
+              <Th colSpan={3} className="border-l border-border/60 text-center whitespace-nowrap bg-rose-500/10 text-rose-400">ATK</Th>
+              <Th colSpan={3} className="border-l border-border/60 text-center whitespace-nowrap bg-sky-500/10 text-sky-400">DEF</Th>
+              <Th rowSpan={2} className="min-w-[17rem] max-w-none border-l border-border/60 pl-3 text-left whitespace-nowrap">Agent Compositions</Th>
+            </tr>
+            <tr className="border-b border-border">
             <Th className="border-l border-border/60 text-center">ATK 1st</Th>
             <Th className="text-center">DEF 1st</Th>
             <Th className="border-l border-border/60 text-center bg-rose-500/5">RW%</Th>
@@ -73,7 +74,8 @@ export default function TeamStatsPage() {
             <MapRowGroup key={m.map_name ?? "unknown"} row={m} />
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   );
 }
@@ -144,15 +146,15 @@ function MapRowGroup({ row }: { row: TeamMapStat }) {
         <Td className="text-center tabular-nums bg-sky-500/5 text-win">{row.def_rounds_won}</Td>
         <Td className="text-center tabular-nums bg-sky-500/5 text-loss">{row.def_rounds_lost}</Td>
 
-        <Td className="border-l border-border/60 pl-4">
+        <Td className={`border-l border-border/60 px-3 min-w-[17rem]`}>
           <div className="flex flex-col gap-2">
             {row.agent_comps.slice(0, 2).map((comp, i) => (
-              <div key={i} className="flex items-center gap-1 flex-wrap">
+              <div key={i} className="flex items-center gap-0.5 flex-nowrap">
                 {comp.agents.map((agent) => (
                   <AgentBadge key={agent} agent={agent} size={22} showName={false} />
                 ))}
                 {comp.count > 1 && (
-                  <span className="ml-1 text-[10px] text-muted tabular-nums">×{comp.count}</span>
+                  <span className="ml-0.5 shrink-0 text-[10px] text-muted tabular-nums">×{comp.count}</span>
                 )}
               </div>
             ))}
@@ -230,8 +232,8 @@ function MatchDetailRow({ match }: { match: TeamMapMatchDetail }) {
       <Td colSpan={3} className="border-l border-border/60 bg-sky-500/5" />
 
       {/* Agent icons */}
-      <Td className="border-l border-border/60 pl-4">
-        <div className="flex items-center gap-1 flex-wrap">
+      <Td className="border-l border-border/60 px-3 min-w-[17rem]">
+        <div className="flex items-center gap-0.5 flex-nowrap overflow-x-auto max-w-full">
           {match.agents.map((agent) => (
             <AgentBadge key={agent} agent={agent} size={20} showName={false} />
           ))}
