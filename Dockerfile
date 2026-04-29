@@ -29,5 +29,5 @@ ENV SERVER_RELOAD=0
 
 EXPOSE 8000
 
-CMD ["uvicorn", "valorant_analyst.server.app:app", \
-     "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Use shell form so Railway's $PORT env var is expanded
+CMD uvicorn valorant_analyst.server.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
