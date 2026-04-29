@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0e1014;
+  --color-bg-elevated: #15181d;
+  --color-panel: #181c22;
+  --color-panel-hover: #1e232a;
+  --color-border: #23272f;
+  --color-border-strong: #2e333c;
+  --color-text: #e6e8eb;
+  --color-text-strong: #ffffff;
+  --color-muted: #8b95a3;
+  --color-muted-strong: #b1bac4;
+  --color-accent: #ff4655;
+  --color-accent-strong: #ff5d6c;
+  --color-win: #18b075;
+  --color-win-soft: rgba(24, 176, 117, 0.15);
+  --color-loss: #ff4655;
+  --color-loss-soft: rgba(255, 70, 85, 0.15);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Subtle hairline above the scrollbar to match the panel chrome. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}

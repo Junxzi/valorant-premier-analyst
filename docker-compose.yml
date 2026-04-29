@@ -1,0 +1,50 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local Docker Compose — mirrors the Railway production setup.
+# Usage:
+#   docker compose up --build
+#
+# Frontend:  http://localhost:3000
+# API docs:  http://localhost:8000/docs
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── FastAPI backend ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env          # HENRIK_API_KEY, PREMIER_TEAM_NAME, etc.
+    environment:
+      CORS_ORIGINS: "http://localhost:3000"
+      SERVER_RELOAD: "0"
+    volumes:
+      - ./db:/app/db               # DuckDB — persisted on host
+      - ./data:/app/data           # strategy JSON, bios, raw matches
+    restart: unless-stopped
+
+  # ── Next.js frontend ────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        # Client-side code runs in the browser, so it must use the
+        # host-accessible URL (localhost), not the Docker internal hostname.
+        NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
+        DEFAULT_TEAM_NAME: "${PREMIER_TEAM_NAME:-}"
+        DEFAULT_TEAM_TAG: "${PREMIER_TEAM_TAG:-}"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Player avatars uploaded through the web UI are stored here.
+      # Map to a host path so they survive container restarts.
+      - ./web/public/players:/app/public/players
+    depends_on:
+      - api
+    restart: unless-stopped
