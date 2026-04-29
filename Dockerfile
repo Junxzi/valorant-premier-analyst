@@ -3,12 +3,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# System packages needed by pandas / duckdb
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python package
 COPY pyproject.toml .
 COPY src/ src/
 
-RUN pip install --no-cache-dir -e . && \
-    mkdir -p db data/raw data/strategy data/bios
+RUN pip install --no-cache-dir -e .
+
+# Copy initial data (DB + strategy/bios).
+# These are overridden at runtime by the mounted Volume on Railway.
+COPY db/ db/
+COPY data/ data/
+
+RUN mkdir -p db data/raw data/strategy data/bios
 
 # Default env (override via Railway env vars or docker-compose)
 ENV SERVER_HOST=0.0.0.0
