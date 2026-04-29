@@ -1,0 +1,47 @@
+# Next.js frontend — build with repository ROOT as Docker context (Railway monorepo).
+#
+# Railway: set Variable  RAILWAY_DOCKERFILE_PATH=Dockerfile.web
+# Leave “Root Directory” empty (whole repo cloned).
+#
+# Vars (toggle “Available at Build Time” where Railway offers it):
+#   NEXT_PUBLIC_API_BASE_URL=https://YOUR-API-xxxx.up.railway.app
+#   DEFAULT_TEAM_NAME=...
+#   DEFAULT_TEAM_TAG=...
+
+FROM node:20-slim AS deps
+WORKDIR /app
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci
+
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY web .
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+
+ARG DEFAULT_TEAM_NAME=""
+ARG DEFAULT_TEAM_TAG=""
+ENV DEFAULT_TEAM_NAME=$DEFAULT_TEAM_NAME
+ENV DEFAULT_TEAM_TAG=$DEFAULT_TEAM_TAG
+
+RUN npm run build
+
+FROM node:20-slim AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+RUN mkdir -p public/players
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
