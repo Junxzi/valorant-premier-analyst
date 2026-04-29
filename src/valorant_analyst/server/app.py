@@ -11,6 +11,7 @@ load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from .routes import health, matches, players, sync, teams
 
@@ -45,6 +46,12 @@ def create_app() -> FastAPI:
     app.include_router(matches.router, prefix="/api")
     app.include_router(players.router, prefix="/api")
     app.include_router(sync.router, prefix="/api")
+
+    @app.get("/", include_in_schema=False)
+    async def redirect_root_docs() -> RedirectResponse:
+        """Bare URL opens API docs instead of 404."""
+        return RedirectResponse(url="/docs")
+
     return app
 
 
