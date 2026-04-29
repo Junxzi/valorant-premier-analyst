@@ -8,6 +8,7 @@ import type { MatchDetail, MatchTeamSummary, RoundEconomyEntry, RoundEntry } fro
 import {
   formatDuration,
   formatGameStart,
+  shortMatchId,
   teamDisplayName,
 } from "@/lib/format";
 import { mapSplashUrl } from "@/lib/maps";
@@ -162,6 +163,12 @@ function MatchHero({
           <div className="text-right text-xs text-muted">
             <p>{dateLabel}</p>
             <p className="mt-0.5">Duration {duration}</p>
+            <p
+              className="mt-0.5 font-mono text-[11px]"
+              title={match.match_id}
+            >
+              ID {shortMatchId(match.match_id, 12)}
+            </p>
             {match.vod_url ? (
               <p className="mt-1">
                 <a
