@@ -8,6 +8,10 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+/** Seconds to cache GET responses on the Next.js server (production only). 0 = still cache no-store. */
+const API_GET_REVALIDATE_SEC = Number(process.env.API_REVALIDATE_SECONDS ?? "30");
+
+
 export type HealthResponse = {
   status: string;
   db_present: boolean;
@@ -334,12 +338,19 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
   let res: Response;
+  const method = init?.method?.toUpperCase() ?? "GET";
+  const isGet = method === "GET";
+  const cacheOptions =
+    isGet &&
+    process.env.NODE_ENV === "production" &&
+    API_GET_REVALIDATE_SEC > 0
+      ? { next: { revalidate: API_GET_REVALIDATE_SEC } as const }
+      : { cache: "no-store" as const };
+
   try {
     res = await fetch(url, {
       ...init,
-      // Always pull fresh data while the project is in early dev. Switch to
-      // `next: { revalidate: N }` once the data is stable enough to cache.
-      cache: "no-store",
+      ...cacheOptions,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
