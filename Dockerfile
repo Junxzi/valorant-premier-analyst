@@ -29,5 +29,6 @@ ENV SERVER_RELOAD=0
 
 EXPOSE 8000
 
-# Use shell form so Railway's $PORT env var is expanded
-CMD uvicorn valorant_analyst.server.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+# Use Python so PORT is read from the real environment (Railway often injects
+# a broken custom start command with a literal "$PORT" string).
+CMD ["python", "-m", "valorant_analyst.serve_production"]
