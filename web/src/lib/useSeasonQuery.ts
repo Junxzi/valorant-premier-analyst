@@ -4,18 +4,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo } from "react";
 
 import type { SeasonFilter } from "@/components/SeasonToggle";
-import type { SeasonId } from "@/lib/seasons";
-import { findSeasonById } from "@/lib/seasons";
 
-/** Default season for newly-loaded pages — V26A3 is the active season. */
-const DEFAULT_SEASON: SeasonFilter = "v26a3";
-
-const VALID_VALUES: ReadonlySet<SeasonFilter> = new Set<SeasonFilter>(["all"]);
-function isValid(v: string | null): v is SeasonFilter {
-  if (v == null) return false;
-  if (VALID_VALUES.has(v as SeasonFilter)) return true;
-  return findSeasonById(v as SeasonId) !== undefined;
-}
+import { DEFAULT_SEASON, isValidSeason } from "./seasonQuery";
 
 /**
  * Read/write the season filter from `?season=` in the URL.
@@ -26,6 +16,10 @@ function isValid(v: string | null): v is SeasonFilter {
  *   project's current-season-first design).
  * - Uses `router.replace` (not `push`) so the back button doesn't fill up
  *   with toggle-flip entries.
+ *
+ * NOTE: server components must import the corresponding helpers from
+ * `seasonQuery.ts` instead — pulling this hook (or anything from this
+ * `"use client"` module) into a server-side render path will throw.
  */
 export function useSeasonQuery(): {
   season: SeasonFilter;
@@ -37,7 +31,7 @@ export function useSeasonQuery(): {
 
   const raw = searchParams.get("season");
   const season: SeasonFilter = useMemo(
-    () => (isValid(raw) ? raw : DEFAULT_SEASON),
+    () => (isValidSeason(raw) ? (raw as SeasonFilter) : DEFAULT_SEASON),
     [raw],
   );
 
@@ -56,16 +50,4 @@ export function useSeasonQuery(): {
   );
 
   return { season, setSeason };
-}
-
-/**
- * Server-side variant — read the season from a `searchParams` object.
- * Used by Next.js page/layout server components that need to fetch
- * pre-filtered data from the API.
- */
-export function readSeasonFromSearchParams(
-  raw: string | string[] | undefined,
-): SeasonFilter {
-  const v = Array.isArray(raw) ? raw[0] : raw;
-  return isValid(v ?? null) ? (v as SeasonFilter) : DEFAULT_SEASON;
 }

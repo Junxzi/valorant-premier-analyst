@@ -24,7 +24,7 @@ import type {
   PlayerTeamAffiliation,
 } from "@/lib/api";
 import { seasonWindowUnixSec } from "@/lib/seasons";
-import { readSeasonFromSearchParams } from "@/lib/useSeasonQuery";
+import { readSeasonFromSearchParams } from "@/lib/seasonQuery";
 
 import { PlayerSummaryRow } from "./PlayerSummaryRow";
 
