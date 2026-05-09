@@ -7,8 +7,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from ...config import DEFAULT_ROSTER_HISTORY_PATH
+from ...storage.roster_history import load_roster_history, member_records
 from ..deps import db_path, open_duckdb
-from ..vods import load_vods
 from ..schemas import (
     MapWinrate,
     OpponentSummary,
@@ -26,12 +27,56 @@ from ..schemas import (
     TeamStatsResponse,
     UpcomingMatch,
 )
+from ..vods import load_vods
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 def _winrate(wins: int, games: int) -> float:
     return round(100.0 * wins / games, 1) if games else 0.0
+
+
+def _current_member_keys(
+    name: str, tag: str
+) -> tuple[set[str], set[tuple[str, str]]] | None:
+    """Return (current_puuids, current_riot_ids) from data/roster_history.json.
+
+    Returns ``None`` if the file is missing or has no entry for the team — in
+    that case callers should fall back to the legacy "everyone is current"
+    behavior so the dashboard doesn't suddenly show old members as departed.
+    """
+    history = load_roster_history(DEFAULT_ROSTER_HISTORY_PATH)
+    records = member_records(history, name, tag)
+    if not records:
+        return None
+    puuids: set[str] = set()
+    riot_ids: set[tuple[str, str]] = set()
+    for r in records:
+        if not r.is_current:
+            continue
+        if r.puuid:
+            puuids.add(r.puuid)
+        if r.name and r.tag:
+            riot_ids.add((r.name.lower(), r.tag.lower()))
+    return puuids, riot_ids
+
+
+def _is_current(
+    keys: tuple[set[str], set[tuple[str, str]]] | None,
+    puuid: str | None,
+    name: str | None,
+    tag: str | None,
+) -> bool:
+    if keys is None:
+        return True
+    puuids, riot_ids = keys
+    if puuid and puuid in puuids:
+        return True
+    return (
+        isinstance(name, str)
+        and isinstance(tag, str)
+        and (name.lower(), tag.lower()) in riot_ids
+    )
 
 
 def _ensure_team_seen(con: object, name: str, tag: str) -> None:
@@ -216,6 +261,7 @@ def get_team(
             ''',
             [name, tag],
         ).fetchall()
+        current_keys = _current_member_keys(name, tag)
         roster = [
             RosterMember(
                 puuid=str(r[0]),
@@ -226,6 +272,7 @@ def get_team(
                 avg_deaths=round(float(r[5]), 2) if r[5] is not None else None,
                 kd_ratio=float(r[6]) if r[6] is not None else None,
                 agent_main=r[7],
+                is_current=_is_current(current_keys, str(r[0]), r[1], r[2]),
             )
             for r in roster_rows
         ]

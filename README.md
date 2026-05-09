@@ -35,9 +35,10 @@ DuckDB upsert (db/valorant.duckdb)
 | `api/henrik_client.py` | HenrikDev API 取得（timeout / 例外整理） |
 | `storage/raw_store.py` | バンドル JSON 入出力 + `data/raw/matches/` への per-match アーカイブ |
 | `storage/duckdb_store.py` | `upsert_dataframe`（自然キー差分追加）/ `table_row_count` |
+| `storage/roster_history.py` | `data/roster_history.json` の永続化と API/DB 由来メンバーのマージ |
 | `processing/normalize.py` | `filter_premier` + `matches`/`match_players` 正規化 |
 | `analysis/roster.py` | ロスター解析（discover / matches / payload フィルタ / Premier API メンバー抽出） |
-| `cli.py` | `fetch` / `ingest` / `backfill` / `status` / `run` / `report` / `team-info` / `team-backfill` / `roster-discover` / `roster-matches` |
+| `cli.py` | `fetch` / `ingest` / `backfill` / `status` / `run` / `report` / `team-info` / `team-backfill` / `roster-discover` / `roster-matches` / `roster-sync` |
 
 > `analysis/metrics.py` と `reporting/markdown_report.py` は **任意の `report` コマンド専用**として残してありますが、データ基盤の中心ではありません。
 
@@ -180,6 +181,42 @@ python -m valorant_analyst.cli roster-matches
 python -m valorant_analyst.cli ingest --from-archive --roster-only
 ```
 
+#### ロスター履歴の自動同期（メンバー入れ替え対応）
+
+`team-backfill` を実行すると、最後に **ロスター履歴の同期** が自動で走ります。
+履歴は `data/roster_history.json` に蓄積され、新メンバーは自動で追加され、
+チームを抜けたメンバーは `is_current=false` に倒されつつ **履歴には残ります**。
+これにより、新加入直後でも追加コマンドなしで分析対象に入り、過去の選手も
+ロスターフィルタや Web ダッシュボードのロスターから消えません。
+
+```bash
+# 通常フロー: チーム公式戦の取得と同時にロスター履歴も自動更新
+python -m valorant_analyst.cli team-backfill
+python -m valorant_analyst.cli ingest --from-archive
+
+# 単独で同期だけ走らせたい場合（DB スキャンも併用して過去メンバーを回収）
+python -m valorant_analyst.cli roster-sync --scan-db
+```
+
+ロスター解決の優先順位（`roster-matches` / `ingest --roster-only` 共通）:
+
+1. `PREMIER_ROSTER`（`.env` の手動オーバーライド）
+2. `data/roster_history.json` の **過去 + 現役の union**
+3. Premier API の現メンバー（履歴がまだ空のときのフォールバック）
+
+`--roster-source` で明示指定もできます:
+
+```bash
+# 現役だけで絞りたい
+python -m valorant_analyst.cli roster-matches --roster-source=current
+
+# 履歴にあるメンバー全員で絞りたい（既定の auto と同等、履歴がある場合）
+python -m valorant_analyst.cli roster-matches --roster-source=history
+
+# .env の PREMIER_ROSTER だけを使う（API/履歴を一切見ない）
+python -m valorant_analyst.cli roster-matches --roster-source=env
+```
+
 `PREMIER_ROSTER` を手動で固定したい時（古いロスター含めて分析したい等）:
 
 ```env
@@ -217,12 +254,13 @@ DuckDB: db\valorant.duckdb
 
 ## 生成されるファイル
 
-| パス                                  | 内容                                             |
-| ------------------------------------- | ------------------------------------------------ |
-| `data/raw/latest_matches.json`        | 直近 fetch のバンドル（API レスポンスそのまま）  |
-| `data/raw/matches/{match_id}.json`    | **試合単位の永続アーカイブ**（再構築の元データ） |
-| `db/valorant.duckdb`                  | `matches` と `match_players` を持つ DuckDB       |
-| `reports/latest_report.md`            | `report` コマンドで生成（任意）                  |
+| パス                                  | 内容                                                              |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `data/raw/latest_matches.json`        | 直近 fetch のバンドル（API レスポンスそのまま）                   |
+| `data/raw/matches/{match_id}.json`    | **試合単位の永続アーカイブ**（再構築の元データ）                  |
+| `data/roster_history.json`            | チーム別のロスター履歴（過去 + 現役の union、`roster-sync` で更新）|
+| `db/valorant.duckdb`                  | `matches` と `match_players` を持つ DuckDB                        |
+| `reports/latest_report.md`            | `report` コマンドで生成（任意）                                   |
 
 DuckDB の中身は標準の duckdb CLI で確認できます。
 

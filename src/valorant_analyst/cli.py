@@ -26,6 +26,7 @@ import pandas as pd
 
 from .analysis.metrics import map_summary, player_summary
 from .analysis.roster import (
+    RosterEntry,
     discover_teammates,
     filter_payload_by_roster,
     find_user_puuid,
@@ -41,6 +42,7 @@ from .config import (
     DEFAULT_DB_PATH,
     DEFAULT_RAW_MATCHES_PATH,
     DEFAULT_REPORT_PATH,
+    DEFAULT_ROSTER_HISTORY_PATH,
     RAW_DIR,
     AppConfig,
     ConfigError,
@@ -70,6 +72,14 @@ from .storage.raw_store import (
     load_raw_json,
     save_match_archive,
     save_raw_json,
+)
+from .storage.roster_history import (
+    all_members as roster_history_all_members,
+)
+from .storage.roster_history import (
+    load_roster_history,
+    merge_team_members,
+    save_roster_history,
 )
 
 logger = logging.getLogger("valorant_analyst")
@@ -149,7 +159,7 @@ def cmd_ingest(
     use_archive: bool,
     premier_only: bool,
     roster_only: bool = False,
-    roster_entries: tuple[str, ...] = (),
+    roster_entries: list[RosterEntry] | None = None,
     roster_min_present: int = 4,
     rebuild_players: bool = False,
 ) -> tuple[UpsertResult, UpsertResult]:
@@ -167,15 +177,15 @@ def cmd_ingest(
         logger.info("Premier filter: kept %d / %d matches", after, before)
 
     if roster_only:
-        parsed = parse_roster_entries(roster_entries) if roster_entries else None
-        if not parsed:
+        if not roster_entries:
             raise ConfigError(
-                "--roster-only requires PREMIER_ROSTER (or PREMIER_TEAM_NAME/TAG "
-                "+ HENRIK_API_KEY for auto-discovery) to be set in .env. "
-                "Run `team-info` to verify your team is found."
+                "--roster-only requires a non-empty roster. Set PREMIER_ROSTER "
+                "in .env, populate data/roster_history.json via `roster-sync`, "
+                "or configure PREMIER_TEAM_NAME/TAG + HENRIK_API_KEY for "
+                "auto-discovery."
             )
         before = len(payload.get("data") or [])
-        payload = filter_payload_by_roster(payload, parsed, roster_min_present)
+        payload = filter_payload_by_roster(payload, roster_entries, roster_min_present)
         after = len(payload.get("data") or [])
         logger.info(
             "Roster filter (>= %d members on same team): kept %d / %d matches",
@@ -402,11 +412,20 @@ def cmd_team_info(config: AppConfig) -> None:
 def cmd_team_backfill(
     config: AppConfig,
     archive_dir: Path,
+    db_path: Path,
+    history_path: Path,
     *,
     sleep_seconds: float,
     max_matches: int | None,
+    sync_roster: bool = True,
 ) -> None:
-    """Pull every official Premier league match's full detail into the archive."""
+    """Pull every official Premier league match's full detail into the archive.
+
+    When ``sync_roster`` is true, also refreshes ``data/roster_history.json``
+    at the end so any new members are captured automatically. The sync runs
+    with ``scan_db=True`` so departed members already in DuckDB are picked
+    up too. Sync failures are logged but do not fail the backfill itself.
+    """
     api_key = config.require_api_key()
     team_name, team_tag = config.require_premier_team()
     client = HenrikClient(api_key=api_key, max_retries=2)
@@ -476,6 +495,14 @@ def cmd_team_backfill(
         archive_dir,
     )
 
+    if sync_roster:
+        try:
+            cmd_roster_sync(config, db_path, history_path, scan_db=True)
+        except Exception as exc:  # noqa: BLE001 - sync is best-effort
+            logger.warning(
+                "roster-sync after team-backfill failed (non-fatal): %s", exc
+            )
+
 
 def _read_match_players(db_path: Path) -> pd.DataFrame:
     if not db_path.exists():
@@ -529,21 +556,82 @@ def cmd_roster_discover(config: AppConfig, db_path: Path, top_n: int) -> None:
     )
 
 
+def _roster_from_history(
+    config: AppConfig,
+    history_path: Path,
+    *,
+    only_current: bool,
+) -> list[RosterEntry]:
+    """Return roster entries from ``data/roster_history.json`` (if any)."""
+    if not (config.premier_team_name and config.premier_team_tag):
+        return []
+    from .storage.roster_history import member_records as _member_records
+
+    history = load_roster_history(history_path)
+    records = _member_records(
+        history, config.premier_team_name, config.premier_team_tag
+    )
+    if only_current:
+        records = [r for r in records if r.is_current]
+    return [r.to_roster_entry() for r in records]
+
+
 def _resolve_roster_entries_or_team(
     config: AppConfig,
-) -> list:
-    """Pick roster entries to use, falling back to the team's official members.
+    history_path: Path = DEFAULT_ROSTER_HISTORY_PATH,
+    *,
+    source: str = "auto",
+) -> list[RosterEntry]:
+    """Pick roster entries to use for filters / analysis.
 
-    Order of precedence:
-    1. ``PREMIER_ROSTER`` from .env (manual override)
-    2. The current Premier team's members from the API (auto-discovered)
+    *source* controls precedence:
+
+    * ``"auto"``    — ``PREMIER_ROSTER`` (env) > history union > current API
+    * ``"env"``     — strictly ``PREMIER_ROSTER``; raises if empty
+    * ``"history"`` — full union (current + departed) from
+      ``data/roster_history.json``; raises if file is empty for this team
+    * ``"current"`` — only members marked ``is_current=True`` in the history
+      file, falling back to the live API if the file is empty
     """
-    if config.roster_entries:
+    if source == "env":
+        if not config.roster_entries:
+            raise ConfigError(
+                "--roster-source=env requires PREMIER_ROSTER to be set in .env."
+            )
         return parse_roster_entries(config.roster_entries)
+
+    if source == "auto" and config.roster_entries:
+        return parse_roster_entries(config.roster_entries)
+
+    if source in ("auto", "history"):
+        union = _roster_from_history(config, history_path, only_current=False)
+        if union:
+            logger.info(
+                "Using roster history union (%d members) from %s",
+                len(union),
+                history_path,
+            )
+            return union
+        if source == "history":
+            raise ConfigError(
+                f"--roster-source=history but {history_path} has no entries "
+                f"for {config.premier_team_name}#{config.premier_team_tag}. "
+                "Run `roster-sync --scan-db` first."
+            )
+
+    if source == "current":
+        active = _roster_from_history(config, history_path, only_current=True)
+        if active:
+            logger.info(
+                "Using %d current member(s) from roster history at %s",
+                len(active),
+                history_path,
+            )
+            return active
 
     if config.premier_team_name and config.premier_team_tag and config.henrik_api_key:
         logger.info(
-            "PREMIER_ROSTER not set; pulling roster from Premier team %s#%s ...",
+            "Falling back to live Premier team API for %s#%s ...",
             config.premier_team_name,
             config.premier_team_tag,
         )
@@ -556,13 +644,20 @@ def _resolve_roster_entries_or_team(
             return members
 
     raise ConfigError(
-        "Roster is empty: set PREMIER_ROSTER in .env, or configure "
-        "PREMIER_TEAM_NAME / PREMIER_TEAM_TAG so the team API can supply it."
+        "Roster is empty: set PREMIER_ROSTER in .env, run `roster-sync` to "
+        "populate data/roster_history.json, or configure PREMIER_TEAM_NAME / "
+        "PREMIER_TEAM_TAG so the team API can supply it."
     )
 
 
-def cmd_roster_matches(config: AppConfig, db_path: Path) -> None:
-    parsed = _resolve_roster_entries_or_team(config)
+def cmd_roster_matches(
+    config: AppConfig,
+    db_path: Path,
+    history_path: Path = DEFAULT_ROSTER_HISTORY_PATH,
+    *,
+    source: str = "auto",
+) -> None:
+    parsed = _resolve_roster_entries_or_team(config, history_path, source=source)
     players_df = _read_match_players(db_path)
     resolved, unresolved = resolve_roster_puuids(parsed, players_df)
     logger.info(
@@ -584,6 +679,162 @@ def cmd_roster_matches(config: AppConfig, db_path: Path) -> None:
 
     logger.info("Matches where >= %d roster members shared a team:", config.roster_min_present)
     _print_dataframe(matches)
+
+
+def _scan_team_members_from_db(
+    db_path: Path, team_name: str, team_tag: str
+) -> list[RosterEntry]:
+    """Pull every puuid that ever played on this team's side, from DuckDB.
+
+    Used as a complement to the API roster: the API only returns *current*
+    members, so a fresh DB scan is the simplest way to recover departed
+    members and seed the history file the first time it's built.
+    """
+    if not db_path.exists():
+        return []
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        rows = con.execute(
+            f'''
+            WITH ours AS (
+                SELECT match_id, team
+                FROM "{TEAMS_TABLE}"
+                WHERE premier_team_name = ? AND premier_team_tag = ?
+            )
+            SELECT mp.puuid,
+                   ANY_VALUE(mp.name) AS name,
+                   ANY_VALUE(mp.tag)  AS tag
+            FROM "{PLAYERS_TABLE}" mp
+            JOIN ours o
+              ON mp.match_id = o.match_id AND mp.team = o.team
+            WHERE mp.puuid IS NOT NULL AND mp.puuid <> ''
+            GROUP BY mp.puuid
+            ''',
+            [team_name, team_tag],
+        ).fetchall()
+    except duckdb.CatalogException:
+        return []
+    finally:
+        con.close()
+
+    entries: list[RosterEntry] = []
+    for r in rows:
+        puuid = str(r[0]) if r[0] is not None else None
+        name = str(r[1]) if r[1] is not None else None
+        tag = str(r[2]) if r[2] is not None else None
+        if not puuid:
+            continue
+        raw = f"{name}#{tag}" if name and tag else puuid
+        entries.append(RosterEntry(raw=raw, name=name, tag=tag, puuid=puuid))
+    return entries
+
+
+def cmd_roster_sync(
+    config: AppConfig,
+    db_path: Path,
+    history_path: Path,
+    *,
+    scan_db: bool,
+) -> None:
+    """Refresh ``data/roster_history.json`` from the API (and optionally DuckDB).
+
+    The API is the source of truth for ``is_current``; the optional DB scan
+    only adds previously-seen members that the API forgot about (common when
+    a player has left the team).
+    """
+    api_key = config.require_api_key()
+    team_name, team_tag = config.require_premier_team()
+
+    history = load_roster_history(history_path)
+
+    client = HenrikClient(api_key=api_key)
+    api_entries: list[RosterEntry] = []
+    try:
+        payload = client.get_premier_team(team_name, team_tag)
+        api_entries = members_from_premier_team(payload)
+    except HenrikAPIError as exc:
+        logger.warning(
+            "Premier team API call failed (%s) — proceeding with DB scan only "
+            "if --scan-db was requested.",
+            exc,
+        )
+
+    logger.info(
+        "roster-sync: team=%s#%s api_members=%d scan_db=%s",
+        team_name,
+        team_tag,
+        len(api_entries),
+        scan_db,
+    )
+
+    api_report = merge_team_members(
+        history,
+        team_name,
+        team_tag,
+        api_entries,
+        source="api",
+        # Only let the API mark people inactive when it actually returned a
+        # roster. An empty `data.member` is common right after enrollment and
+        # we don't want to flip everyone to is_current=False in that case.
+        mark_missing_inactive=bool(api_entries),
+    )
+
+    db_report = None
+    if scan_db:
+        db_entries = _scan_team_members_from_db(db_path, team_name, team_tag)
+        logger.info("roster-sync: db_scan recovered %d puuid(s)", len(db_entries))
+        db_report = merge_team_members(
+            history,
+            team_name,
+            team_tag,
+            db_entries,
+            source="match_players",
+            # The DB scan is *additive*: a puuid that no longer plays for the
+            # team simply won't appear, but they shouldn't be marked inactive
+            # by the scan itself (the API call above already handled that).
+            mark_missing_inactive=False,
+            # The DB only proves "this puuid played here at some point", which
+            # is not authoritative for active-roster membership. The API call
+            # above is the source of truth for is_current; if it confirmed
+            # this player they'll already be marked active and this merge
+            # leaves them alone.
+            default_is_current=False,
+        )
+
+    save_roster_history(history, history_path)
+
+    def _log_report(label: str, report) -> None:
+        if report is None:
+            return
+        for added in report.added:
+            who = (
+                f"{added.name}#{added.tag}" if added.name and added.tag else added.puuid
+            )
+            logger.info("  [%s] added: %s (puuid=%s)", label, who, added.puuid or "-")
+        for rejoined in report.rejoined:
+            who = (
+                f"{rejoined.name}#{rejoined.tag}"
+                if rejoined.name and rejoined.tag
+                else rejoined.puuid
+            )
+            logger.info("  [%s] rejoined: %s", label, who)
+        for departed in report.departed:
+            who = (
+                f"{departed.name}#{departed.tag}"
+                if departed.name and departed.tag
+                else departed.puuid
+            )
+            logger.info("  [%s] departed: %s (kept in history)", label, who)
+
+    _log_report("api", api_report)
+    _log_report("db", db_report)
+
+    members = roster_history_all_members(history, team_name, team_tag)
+    logger.info(
+        "roster-sync done: %d total member(s) in history at %s",
+        len(members),
+        history_path,
+    )
 
 
 def cmd_status(db_path: Path) -> None:
@@ -695,6 +946,7 @@ def build_parser() -> argparse.ArgumentParser:
             "report",
             "roster-discover",
             "roster-matches",
+            "roster-sync",
             "team-info",
             "team-backfill",
         ],
@@ -702,7 +954,8 @@ def build_parser() -> argparse.ArgumentParser:
             "fetch / ingest / backfill / status / run / report; "
             "team-info, team-backfill (Premier team API: official roster + "
             "league_matches); roster-discover, roster-matches (analyze who "
-            "played together)."
+            "played together); roster-sync (merge API + DB into "
+            "data/roster_history.json so departed members stick around)."
         ),
     )
     parser.add_argument(
@@ -795,6 +1048,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="team-backfill: cap the number of matches downloaded.",
     )
     parser.add_argument(
+        "--roster-history-path",
+        type=Path,
+        default=DEFAULT_ROSTER_HISTORY_PATH,
+        help=(
+            "roster-sync: path to the persisted roster history JSON "
+            f"(default: {DEFAULT_ROSTER_HISTORY_PATH})."
+        ),
+    )
+    parser.add_argument(
+        "--scan-db",
+        action="store_true",
+        help=(
+            "roster-sync: also scan match_players for puuids that played on "
+            "this team's side, so departed members are rediscovered."
+        ),
+    )
+    parser.add_argument(
+        "--roster-source",
+        choices=["auto", "history", "current", "env"],
+        default="auto",
+        help=(
+            "ingest --roster-only / roster-matches: where to pull the roster "
+            "from. 'auto' (default) = env > history union > API. "
+            "'history' = union of all members ever seen on the team. "
+            "'current' = only members still on the active roster from the "
+            "API or roster_history.json. 'env' = strictly PREMIER_ROSTER."
+        ),
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -815,11 +1097,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
 
+        resolved_roster: list[RosterEntry] | None = None
+        if args.roster_only:
+            resolved_roster = _resolve_roster_entries_or_team(
+                config,
+                args.roster_history_path,
+                source=args.roster_source,
+            )
+
         ingest_kwargs = {
             "use_archive": args.from_archive,
             "premier_only": not args.all_modes,
             "roster_only": args.roster_only,
-            "roster_entries": config.roster_entries,
+            "roster_entries": resolved_roster,
             "roster_min_present": config.roster_min_present,
             "rebuild_players": args.rebuild_players,
         }
@@ -858,13 +1148,27 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "roster-discover":
             cmd_roster_discover(config, args.db_path, args.top_n)
         elif args.command == "roster-matches":
-            cmd_roster_matches(config, args.db_path)
+            cmd_roster_matches(
+                config,
+                args.db_path,
+                args.roster_history_path,
+                source=args.roster_source,
+            )
+        elif args.command == "roster-sync":
+            cmd_roster_sync(
+                config,
+                args.db_path,
+                args.roster_history_path,
+                scan_db=args.scan_db,
+            )
         elif args.command == "team-info":
             cmd_team_info(config)
         elif args.command == "team-backfill":
             cmd_team_backfill(
                 config,
                 args.archive_dir,
+                args.db_path,
+                args.roster_history_path,
                 sleep_seconds=args.sleep_seconds,
                 max_matches=args.max_matches,
             )

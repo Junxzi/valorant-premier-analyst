@@ -17,6 +17,7 @@ export function SyncButton() {
   const router = useRouter();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wasRunningRef = useRef(false);
 
@@ -26,9 +27,16 @@ export function SyncButton() {
       if (res.ok) {
         const next: SyncStatus = await res.json();
         setStatus(next);
+        setActionError(null);
         return next;
       }
-    } catch {}
+      setActionError(`同期状態の取得に失敗しました (${res.status})`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setActionError(
+        `API に接続できません (${API_BASE_URL})。NEXT_PUBLIC_API_BASE_URL と CORS を確認してください: ${msg}`,
+      );
+    }
     return null;
   };
 
@@ -54,10 +62,29 @@ export function SyncButton() {
   }, [status?.running, router]);
 
   const handleSync = async () => {
+    setActionError(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/sync`, { method: "POST" });
-      if (res.ok) setStatus(await res.json());
-    } catch {}
+      if (res.ok) {
+        setStatus(await res.json());
+        return;
+      }
+      let detail = "";
+      try {
+        const body = (await res.json()) as { detail?: unknown };
+        if (typeof body?.detail === "string") detail = body.detail;
+      } catch {
+        /* ignore */
+      }
+      setActionError(
+        `同期を開始できませんでした (${res.status})${detail ? `: ${detail}` : ""}`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setActionError(
+        `API に接続できません (${API_BASE_URL})。NEXT_PUBLIC_API_BASE_URL を確認してください: ${msg}`,
+      );
+    }
   };
 
   const running = status?.running ?? false;
@@ -72,7 +99,13 @@ export function SyncButton() {
     : null;
 
   return (
-    <div className="relative flex items-center gap-2">
+    <div className="relative flex flex-col items-end gap-1">
+      {actionError && (
+        <p className="max-w-xs text-right text-[10px] text-loss leading-snug" title={actionError}>
+          {actionError}
+        </p>
+      )}
+      <div className="relative flex items-center gap-2">
       <button
         onClick={handleSync}
         disabled={running}
@@ -125,6 +158,7 @@ export function SyncButton() {
           </pre>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -63,6 +63,15 @@ class RosterMember(BaseModel):
     avg_deaths: float | None
     kd_ratio: float | None
     agent_main: str | None
+    is_current: bool = Field(
+        default=True,
+        description=(
+            "True if the player is on the team's current roster. False means "
+            "they were on the team at some point but have since left. Sourced "
+            "from data/roster_history.json (kept up to date by `roster-sync`); "
+            "defaults to True when the file has no entry for the player."
+        ),
+    )
 
 
 class UpcomingMatch(BaseModel):

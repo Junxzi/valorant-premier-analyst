@@ -30,13 +30,10 @@ _state: dict = {
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
-def _run_sync() -> None:
-    started = datetime.now(UTC).isoformat()
-    with _lock:
-        _state["running"] = True
-        _state["last_started_at"] = started
-        _state["last_log"] = ""
-
+def _run_sync_job() -> None:
+    """Execute fetch+ingest; ``running`` / start fields are set before the thread starts."""
+    log = ""
+    status = "error"
     try:
         result = subprocess.run(
             [sys.executable, "-m", "valorant_analyst.cli", "run"],
@@ -53,14 +50,13 @@ def _run_sync() -> None:
     except Exception as exc:  # noqa: BLE001
         log = str(exc)
         status = "error"
-
-    finished = datetime.now(UTC).isoformat()
-    with _lock:
-        _state["running"] = False
-        _state["last_finished_at"] = finished
-        _state["last_status"] = status
-        # Keep last 4 KB of log
-        _state["last_log"] = log[-4096:] if len(log) > 4096 else log
+    finally:
+        finished = datetime.now(UTC).isoformat()
+        with _lock:
+            _state["running"] = False
+            _state["last_finished_at"] = finished
+            _state["last_status"] = status
+            _state["last_log"] = log[-4096:] if len(log) > 4096 else log
 
 
 class SyncStatus(BaseModel):
@@ -84,9 +80,12 @@ def start_sync() -> SyncStatus:
     with _lock:
         if _state["running"]:
             return SyncStatus(**_state)
+        started = datetime.now(UTC).isoformat()
+        _state["running"] = True
+        _state["last_started_at"] = started
+        _state["last_log"] = ""
+        out = SyncStatus(**_state)
 
-    thread = threading.Thread(target=_run_sync, daemon=True)
+    thread = threading.Thread(target=_run_sync_job, daemon=True)
     thread.start()
-
-    with _lock:
-        return SyncStatus(**_state)
+    return out

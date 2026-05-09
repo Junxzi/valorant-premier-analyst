@@ -18,6 +18,7 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 DEFAULT_DB_PATH = DB_DIR / "valorant.duckdb"
 DEFAULT_RAW_MATCHES_PATH = RAW_DIR / "latest_matches.json"
 DEFAULT_REPORT_PATH = REPORTS_DIR / "latest_report.md"
+DEFAULT_ROSTER_HISTORY_PATH = DATA_DIR / "roster_history.json"
 
 
 class ConfigError(RuntimeError):

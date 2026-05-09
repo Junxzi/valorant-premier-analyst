@@ -67,6 +67,7 @@ export type RosterMember = {
   avg_deaths: number | null;
   kd_ratio: number | null;
   agent_main: string | null;
+  is_current?: boolean;
 };
 
 export type UpcomingMatch = {
