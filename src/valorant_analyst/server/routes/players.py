@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from ...config import DEFAULT_BIOS_DIR
 from ..deps import db_path, open_duckdb
 from ..schemas import (
     PlayerAgentStat,
@@ -43,10 +44,46 @@ def _winrate(wins: int, games: int) -> float:
     return round(100.0 * wins / games, 1) if games else 0.0
 
 
+def _time_filter(
+    since: int | None, until: int | None, alias: str = "m"
+) -> tuple[str, list[object]]:
+    """Build an ``AND`` SQL fragment that filters ``<alias>.game_start``.
+
+    Returns ``(sql, params)``. The fragment includes the leading ``AND ``
+    so callers can splice it directly after an existing ``WHERE`` clause:
+
+        sql = f"... WHERE mp.puuid = ? {tf_sql}"
+        params = [puuid, *tf_params]
+
+    When both bounds are ``None`` the fragment is empty and no params are
+    contributed. Callers must already have ``"matches" <alias>`` in their
+    FROM/JOIN list.
+    """
+    parts: list[str] = []
+    params: list[object] = []
+    if since is not None:
+        parts.append(f"{alias}.game_start >= ?")
+        params.append(since)
+    if until is not None:
+        parts.append(f"{alias}.game_start <= ?")
+        params.append(until)
+    if not parts:
+        return "", []
+    return "AND " + " AND ".join(parts), params
+
+
 @router.get("/{puuid}", response_model=PlayerOverview)
 def get_player(
     puuid: str,
     recent_limit: int = Query(default=20, ge=1, le=200),
+    since: int | None = Query(
+        default=None,
+        description="Filter aggregates to matches with game_start >= this Unix sec.",
+    ),
+    until: int | None = Query(
+        default=None,
+        description="Filter aggregates to matches with game_start <= this Unix sec.",
+    ),
     path: Path = Depends(db_path),
 ) -> PlayerOverview:
     """Return a player's full Premier history snapshot.
@@ -54,7 +91,14 @@ def get_player(
     Mirrors what vlr.gg shows on a player page: header (Riot ID + current
     team), summary tiles, agent usage, map performance, team affiliation
     history and a list of recent matches.
+
+    The optional ``since`` / ``until`` Unix-second bounds restrict every
+    aggregate (summary, agents, maps, recent matches, team affiliations)
+    to matches whose ``game_start`` falls inside that window. The 404
+    "player not seen" check intentionally ignores the window so a player
+    who hasn't played the current season still loads.
     """
+    tf_sql, tf_params = _time_filter(since, until)
     with open_duckdb(path) as con:
         seen = con.execute(
             'SELECT COUNT(*) FROM "match_players" WHERE puuid = ?',
@@ -84,7 +128,7 @@ def get_player(
 
         # ------------------------------------------------------------- summary
         summary_row = con.execute(
-            '''
+            f'''
             WITH match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -94,10 +138,11 @@ def get_player(
                        mp.score, mp.damage_made,
                        mr.total_rounds, mt.has_won
                 FROM "match_players" mp
+                JOIN "matches" m ON m.match_id = mp.match_id
                 JOIN match_rounds mr ON mr.match_id = mp.match_id
                 LEFT JOIN "match_teams" mt
                     ON mt.match_id = mp.match_id AND mt.team = mp.team
-                WHERE mp.puuid = ?
+                WHERE mp.puuid = ? {tf_sql}
             )
             SELECT
                 COUNT(*) AS games,
@@ -119,11 +164,16 @@ def get_player(
                      ELSE NULL END AS kd_ratio
             FROM player_match
             ''',
-            [puuid],
+            [puuid, *tf_params],
         ).fetchone()
         agent_main_row = con.execute(
-            'SELECT mode(agent) FROM "match_players" WHERE puuid = ?',
-            [puuid],
+            f'''
+            SELECT mode(mp.agent)
+            FROM "match_players" mp
+            JOIN "matches" m ON m.match_id = mp.match_id
+            WHERE mp.puuid = ? {tf_sql}
+            ''',
+            [puuid, *tf_params],
         ).fetchone()
         agent_main = agent_main_row[0] if agent_main_row else None
 
@@ -147,8 +197,16 @@ def get_player(
         )
 
         # ------------------------------------------------- team affiliations
+        # Inner-join "matches" only when the season filter is active —
+        # otherwise we want NULL game_starts to still count toward the
+        # affiliation history.
+        team_join = (
+            'JOIN "matches" m ON m.match_id = mp.match_id'
+            if tf_sql
+            else 'LEFT JOIN "matches" m ON m.match_id = mp.match_id'
+        )
         team_rows = con.execute(
-            '''
+            f'''
             SELECT mt.premier_team_id,
                    ANY_VALUE(mt.premier_team_name) AS premier_team_name,
                    ANY_VALUE(mt.premier_team_tag)  AS premier_team_tag,
@@ -159,12 +217,12 @@ def get_player(
             FROM "match_players" mp
             JOIN "match_teams" mt
               ON mt.match_id = mp.match_id AND mt.team = mp.team
-            LEFT JOIN "matches" m ON m.match_id = mp.match_id
-            WHERE mp.puuid = ?
+            {team_join}
+            WHERE mp.puuid = ? {tf_sql}
             GROUP BY mt.premier_team_id
             ORDER BY last_seen DESC NULLS LAST, games DESC
             ''',
-            [puuid],
+            [puuid, *tf_params],
         ).fetchall()
         teams = [
             PlayerTeamAffiliation(
@@ -178,13 +236,51 @@ def get_player(
             )
             for r in team_rows
         ]
-        # The "current" team is the most recently played one
-        current_team = teams[0] if teams else None
+        # The "current" team is the most recently played one — always
+        # derived from the unfiltered history so a season toggle that
+        # excludes the player's recent activity still shows who they're
+        # affiliated with right now.
+        if tf_sql:
+            current_row = con.execute(
+                '''
+                SELECT mt.premier_team_id,
+                       ANY_VALUE(mt.premier_team_name) AS premier_team_name,
+                       ANY_VALUE(mt.premier_team_tag)  AS premier_team_tag,
+                       COUNT(DISTINCT mt.match_id) AS games,
+                       SUM(CASE WHEN mt.has_won THEN 1 ELSE 0 END) AS wins,
+                       MIN(m.game_start) AS first_seen,
+                       MAX(m.game_start) AS last_seen
+                FROM "match_players" mp
+                JOIN "match_teams" mt
+                  ON mt.match_id = mp.match_id AND mt.team = mp.team
+                LEFT JOIN "matches" m ON m.match_id = mp.match_id
+                WHERE mp.puuid = ?
+                GROUP BY mt.premier_team_id
+                ORDER BY last_seen DESC NULLS LAST, games DESC
+                LIMIT 1
+                ''',
+                [puuid],
+            ).fetchone()
+            current_team = (
+                PlayerTeamAffiliation(
+                    premier_team_id=current_row[0],
+                    premier_team_name=current_row[1],
+                    premier_team_tag=current_row[2],
+                    games=int(current_row[3] or 0),
+                    wins=int(current_row[4] or 0),
+                    first_seen=_safe_int(current_row[5]),
+                    last_seen=_safe_int(current_row[6]),
+                )
+                if current_row
+                else None
+            )
+        else:
+            current_team = teams[0] if teams else None
 
         # --------------------------------------------------------- agent stats
-        total_games = games  # from summary computed above
+        total_games = games  # from summary computed above (already filtered)
         agent_rows = con.execute(
-            '''
+            f'''
             WITH match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -225,12 +321,13 @@ def get_player(
                    COALESCE(SUM(mp.first_kills), 0)  AS total_first_kills,
                    COALESCE(SUM(mp.first_deaths), 0) AS total_first_deaths
             FROM "match_players" mp
+            JOIN "matches" m ON m.match_id = mp.match_id
             JOIN match_rounds mr ON mr.match_id = mp.match_id
-            WHERE mp.puuid = ?
+            WHERE mp.puuid = ? {tf_sql}
             GROUP BY mp.agent
             ORDER BY games DESC, mp.agent
             ''',
-            [puuid],
+            [puuid, *tf_params],
         ).fetchall()
         agents = [
             PlayerAgentStat(
@@ -260,7 +357,7 @@ def get_player(
 
         # ----------------------------------------------------------- map stats
         map_rows = con.execute(
-            '''
+            f'''
             WITH match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -279,11 +376,11 @@ def get_player(
             JOIN match_rounds mr ON mr.match_id = mp.match_id
             LEFT JOIN "match_teams" mt
                 ON mt.match_id = mp.match_id AND mt.team = mp.team
-            WHERE mp.puuid = ?
+            WHERE mp.puuid = ? {tf_sql}
             GROUP BY m.map_name
             ORDER BY games DESC, m.map_name
             ''',
-            [puuid],
+            [puuid, *tf_params],
         ).fetchall()
         maps = [
             PlayerMapStat(
@@ -299,7 +396,7 @@ def get_player(
 
         # ----------------------------------------------------- recent matches
         recent_rows = con.execute(
-            '''
+            f'''
             WITH match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -320,11 +417,11 @@ def get_player(
                 ON mt.match_id = mp.match_id AND mt.team = mp.team
             LEFT JOIN "match_teams" opp
                 ON opp.match_id = mp.match_id AND opp.team != mp.team
-            WHERE mp.puuid = ?
+            WHERE mp.puuid = ? {tf_sql}
             ORDER BY m.game_start DESC NULLS LAST
             LIMIT ?
             ''',
-            [puuid, recent_limit],
+            [puuid, *tf_params, recent_limit],
         ).fetchall()
         vods = load_vods()
         recent_matches: list[PlayerMatchEntry] = []
@@ -388,7 +485,7 @@ def get_player(
 # Player bio — per-player markdown stored as flat files
 # ---------------------------------------------------------------------------
 
-_BIO_DIR = Path(__file__).resolve().parents[4] / "data" / "bios"
+_BIO_DIR = DEFAULT_BIOS_DIR
 
 
 class _BioBody(BaseModel):

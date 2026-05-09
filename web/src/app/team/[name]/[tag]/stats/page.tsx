@@ -6,44 +6,91 @@ import { useParams } from "next/navigation";
 
 import { AgentBadge } from "@/components/AgentBadge";
 import { resultPill } from "@/components/Pill";
+import { SeasonToggle } from "@/components/SeasonToggle";
 import { VodCell } from "@/components/VodCell";
 import { fetchTeamMapStats } from "@/lib/api";
 import type { TeamMapStat, TeamMapMatchDetail } from "@/lib/api";
 import { formatGameStart, formatPercent, formatScore, teamDisplayName } from "@/lib/format";
 import { mapThumbnailUrl, COMPETITIVE_MAPS } from "@/lib/maps";
+import { seasonWindowUnixSec } from "@/lib/seasons";
+import { useSeasonQuery } from "@/lib/useSeasonQuery";
 
 export default function TeamStatsPage() {
   const params = useParams<{ name: string; tag: string }>();
   const name = decodeURIComponent(params.name);
   const tag = decodeURIComponent(params.tag);
+  const { season, setSeason } = useSeasonQuery();
 
   const [maps, setMaps] = useState<TeamMapStat[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchTeamMapStats(name, tag)
+    // We don't synchronously clear `maps` / `error` here so the old
+    // table stays on screen briefly while the new fetch is in flight —
+    // a "swap when ready" UX. `cancelled` guards against an old request
+    // resolving after the user has already flipped the toggle again.
+    let cancelled = false;
+    const window = seasonWindowUnixSec(season) ?? undefined;
+    fetchTeamMapStats(name, tag, window)
       .then((d) => {
+        if (cancelled) return;
         const byName = new Map(d.maps.map((m) => [m.map_name?.toLowerCase(), m]));
         // Show all competitive maps; fill with zero-data for unplayed ones
         const merged: TeamMapStat[] = COMPETITIVE_MAPS.map((mapName) => {
           return byName.get(mapName.toLowerCase()) ?? emptyMapStat(mapName);
         });
         setMaps(merged);
+        setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [name, tag]);
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [name, tag, season]);
+
+  const heading =
+    season === "all" ? "Map Stats · 全体" : `Map Stats · ${season.toUpperCase()}`;
+
+  const toggleBar = (
+    <div className="mb-3 flex items-center justify-between">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-strong">
+        {heading}
+      </h2>
+      <SeasonToggle value={season} onChange={setSeason} />
+    </div>
+  );
 
   if (error) {
-    return <p className="px-4 py-6 text-sm text-loss">{error}</p>;
+    return (
+      <div>
+        {toggleBar}
+        <p className="px-4 py-6 text-sm text-loss">{error}</p>
+      </div>
+    );
   }
   if (!maps) {
-    return <p className="px-4 py-6 text-sm text-muted">Loading…</p>;
+    return (
+      <div>
+        {toggleBar}
+        <p className="px-4 py-6 text-sm text-muted">Loading…</p>
+      </div>
+    );
   }
   if (maps.length === 0) {
-    return <p className="px-4 py-6 text-sm text-muted">マップデータがありません。</p>;
+    return (
+      <div>
+        {toggleBar}
+        <p className="px-4 py-6 text-sm text-muted">マップデータがありません。</p>
+      </div>
+    );
   }
 
   return (
+    <div>
+      {toggleBar}
     <div className="rounded-md border border-border bg-panel">
       <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] pb-px">
         <table className="min-w-max w-full text-sm">
@@ -77,6 +124,7 @@ export default function TeamStatsPage() {
         </tbody>
         </table>
       </div>
+    </div>
     </div>
   );
 }

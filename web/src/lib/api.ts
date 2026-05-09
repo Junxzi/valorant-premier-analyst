@@ -466,29 +466,56 @@ export function fetchTeamMatches(
   );
 }
 
+/**
+ * Optional Unix-second window passed to backend endpoints that support
+ * the `since` / `until` query parameters. Used to back the "全体 / V26A3"
+ * season toggle without round-tripping all matches.
+ */
+export type TimeWindow = {
+  since?: number;
+  until?: number;
+};
+
+function appendTimeWindow(qs: URLSearchParams, window?: TimeWindow): void {
+  if (!window) return;
+  if (window.since != null) qs.set("since", String(window.since));
+  if (window.until != null) qs.set("until", String(window.until));
+}
+
 export function fetchTeamStats(
   name: string,
   tag: string,
+  window?: TimeWindow,
 ): Promise<TeamStatsResponse> {
+  const qs = new URLSearchParams();
+  appendTimeWindow(qs, window);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<TeamStatsResponse>(
-    `/api/teams/${encodeURIComponent(name)}/${encodeURIComponent(tag)}/stats`,
+    `/api/teams/${encodeURIComponent(name)}/${encodeURIComponent(tag)}/stats${suffix}`,
   );
 }
 
 export function fetchTeamMapStats(
   name: string,
   tag: string,
+  window?: TimeWindow,
 ): Promise<TeamMapStatsResponse> {
+  const qs = new URLSearchParams();
+  appendTimeWindow(qs, window);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return request<TeamMapStatsResponse>(
-    `/api/teams/${encodeURIComponent(name)}/${encodeURIComponent(tag)}/map-stats`,
+    `/api/teams/${encodeURIComponent(name)}/${encodeURIComponent(tag)}/map-stats${suffix}`,
   );
 }
 
 export function fetchPlayer(
   puuid: string,
   recentLimit = 20,
+  window?: TimeWindow,
 ): Promise<PlayerOverview> {
+  const qs = new URLSearchParams({ recent_limit: String(recentLimit) });
+  appendTimeWindow(qs, window);
   return request<PlayerOverview>(
-    `/api/players/${encodeURIComponent(puuid)}?recent_limit=${recentLimit}`,
+    `/api/players/${encodeURIComponent(puuid)}?${qs.toString()}`,
   );
 }

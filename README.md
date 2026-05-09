@@ -357,6 +357,32 @@ SYNC_AUTO_INITIAL_DELAY_SECONDS=30  # 起動直後の初回実行を遅らせる
 
 `HENRIK_API_KEY` / `PREMIER_TEAM_NAME` / `PREMIER_TEAM_TAG` のいずれかが空だと自動的に無効化され、起動ログに警告が出ます。**`UVICORN_WORKERS=1` 前提**（複数ワーカーだとプロセスごとに重複起動するので注意）。
 
+#### Railway へデプロイする場合（Volume 必須）
+
+サーバが書き込む永続データは **すべて `/app/db/` 配下** にまとまっています:
+
+| パス                       | 内容                                              |
+| -------------------------- | ------------------------------------------------- |
+| `db/valorant.duckdb`       | 試合データの DuckDB                               |
+| `db/raw/matches/*.json`    | 試合ごとの生 JSON アーカイブ（再構築の元データ）  |
+| `db/strategy/*.json`       | Strategy タブのマップ別構成                       |
+| `db/strategy/*.notes.json` | Strategy タブのマップ別ノート                     |
+| `db/notes/*.md`            | チーム概要ノート                                  |
+| `db/bios/*.md`             | プレイヤー bio                                    |
+| `db/vods.json`             | VOD URL マッピング                                |
+| `db/roster_history.json`   | ロスター履歴                                      |
+
+**Railway では Settings → Volumes に次の Volume を 1 つ追加してください**:
+
+```text
+Mount path: /app/db
+Size:       1 GB（用途的には 100 MB でも十分）
+```
+
+これだけで上記すべてが永続化され、デプロイをまたいでデータが保持されます。Volume を未設定のままだと、コンテナ再起動 / 再ビルドのたびに DuckDB と上のすべての JSON / Markdown がリセットされる点に注意してください。
+
+旧バージョンで `data/strategy/` などに保存されていたファイルは、サーバ起動時に `db/` 配下へ自動マイグレーションされます（idempotent な一回限りの処理）。
+
 提供エンドポイント:
 
 | メソッド | パス | 用途 |

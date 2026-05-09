@@ -6,10 +6,10 @@ Format: ``{"<match_uuid>": "https://..." , ... }``
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-VODS_PATH = _REPO_ROOT / "data" / "vods.json"
+from ..config import DEFAULT_VODS_PATH
+
+VODS_PATH = DEFAULT_VODS_PATH
 
 
 def load_vods() -> dict[str, str]:

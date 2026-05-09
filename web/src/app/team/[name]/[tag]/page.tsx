@@ -1,25 +1,18 @@
 import Image from "next/image";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Card } from "@/components/Card";
 import { CurrentRoster } from "@/components/CurrentRoster";
-import { resultPill } from "@/components/Pill";
-import { VodCell } from "@/components/VodCell";
-import { ApiError, fetchTeam } from "@/lib/api";
+import { ApiError, fetchTeam, fetchTeamMatches } from "@/lib/api";
 import { mapThumbnailUrl } from "@/lib/maps";
 import { getTeamStaff } from "@/lib/teamConfig";
-import {
-  formatGameStart,
-  formatPercent,
-  formatScore,
-  teamDisplayName,
-} from "@/lib/format";
 import type {
   RecentMatch,
-  TeamRecord,
   UpcomingMatch,
 } from "@/lib/api";
+
+import { OverviewStatsRow } from "./OverviewStatsRow";
+import { RecentMatchesCard } from "./RecentMatchesCard";
 
 // ---------------------------------------------------------------------------
 // V26A3 schedule — fixed, computed from start date
@@ -80,9 +73,18 @@ export default async function TeamOverviewPage({ params }: PageProps) {
 
   const RECENT_LIMIT = 5;
 
+  // Fetch the team summary and the full match list concurrently. The full
+  // match list backs both the season-filtered StatsRow tiles and the
+  // RecentMatchesCard (whose visible rows depend on the toggle).
   let data;
+  let allMatches: RecentMatch[];
   try {
-    data = await fetchTeam(name, tag, RECENT_LIMIT);
+    const [teamData, matchesData] = await Promise.all([
+      fetchTeam(name, tag, 1),
+      fetchTeamMatches(name, tag),
+    ]);
+    data = teamData;
+    allMatches = matchesData.matches;
   } catch (e) {
     if (e instanceof ApiError && e.kind === "not_found") notFound();
     throw e;
@@ -91,19 +93,18 @@ export default async function TeamOverviewPage({ params }: PageProps) {
   const matchesHref = `/team/${encodeURIComponent(name)}/${encodeURIComponent(
     tag,
   )}/matches`;
-  const moreCount = Math.max(0, data.record.games - data.recent_matches.length);
   const { ongoing, upcoming } = categorizeSchedule(
-    data.recent_matches.map((m) => m.game_start),
+    allMatches.map((m) => m.game_start),
   );
 
   return (
     <div className="space-y-6">
-      <StatsRow record={data.record} />
+      <OverviewStatsRow overallRecord={data.record} matches={allMatches} />
       {ongoing.length > 0 && <OngoingMatches matches={ongoing} />}
       {upcoming.length > 0 && <UpcomingMatches matches={upcoming} />}
-      <RecentMatches
-        matches={data.recent_matches}
-        moreCount={moreCount}
+      <RecentMatchesCard
+        matches={allMatches}
+        visibleLimit={RECENT_LIMIT}
         moreHref={matchesHref}
       />
       <CurrentRoster members={data.roster} staff={getTeamStaff(name, tag)} />
@@ -216,185 +217,3 @@ function UpcomingMatches({ matches }: { matches: UpcomingMatch[] }) {
   );
 }
 
-function StatsRow({ record }: { record: TeamRecord }) {
-  const tiles = [
-    { label: "Games", value: String(record.games) },
-    { label: "Wins", value: String(record.wins), tone: "win" as const },
-    { label: "Losses", value: String(record.losses), tone: "loss" as const },
-    {
-      label: "Winrate",
-      value: formatPercent(record.winrate_pct),
-      tone:
-        record.winrate_pct >= 50
-          ? ("win" as const)
-          : record.games > 0
-            ? ("loss" as const)
-            : undefined,
-    },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {tiles.map((t) => (
-        <div
-          key={t.label}
-          className="rounded-md border border-border bg-panel px-4 py-3"
-        >
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-            {t.label}
-          </p>
-          <p
-            className={`mt-1 text-2xl font-semibold tabular-nums ${
-              t.tone === "win"
-                ? "text-win"
-                : t.tone === "loss"
-                  ? "text-loss"
-                  : "text-text-strong"
-            }`}
-          >
-            {t.value}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RecentMatches({
-  matches,
-  moreCount,
-  moreHref,
-}: {
-  matches: RecentMatch[];
-  moreCount: number;
-  moreHref: string;
-}) {
-  return (
-    <Card title="Recent Matches" flush>
-      {matches.length === 0 ? (
-        <EmptyState message="まだ試合データがありません。" />
-      ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="text-[11px] uppercase tracking-wider text-muted">
-                <tr className="border-b border-border">
-                  <Th className="w-14">Result</Th>
-                  <Th className="w-24">Score</Th>
-                  <Th>Opponent</Th>
-                  <Th className="w-32">Map</Th>
-                  <Th className="w-28">Mode</Th>
-                  <Th className="w-44">Date</Th>
-                  <Th className="w-20 text-right">VOD</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {matches.map((m) => (
-                  <RecentMatchRow key={m.match_id} match={m} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {moreCount > 0 && (
-            <Link
-              href={moreHref}
-              className="group flex items-center justify-center gap-2 border-t border-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-muted transition-colors hover:bg-panel-hover hover:text-accent"
-            >
-              <span>… {moreCount} more {moreCount === 1 ? "match" : "matches"}</span>
-              <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
-                →
-              </span>
-            </Link>
-          )}
-        </>
-      )}
-    </Card>
-  );
-}
-
-function RecentMatchRow({ match }: { match: RecentMatch }) {
-  const opponentLabel = teamDisplayName(
-    match.opponent.name,
-    match.opponent.tag,
-    match.opponent.team,
-  );
-
-  const href = `/match/${encodeURIComponent(match.match_id)}`;
-
-  return (
-    <tr className="group cursor-pointer border-b border-border/60 transition-colors hover:bg-panel-hover">
-      <LinkTd href={href}>{resultPill(match.our_team.has_won)}</LinkTd>
-      <LinkTd href={href}>
-        <span className="font-mono tabular-nums text-text-strong">
-          {formatScore(match.our_team.rounds_won, match.our_team.rounds_lost)}
-        </span>
-      </LinkTd>
-      <LinkTd href={href}>
-        <span className="text-text group-hover:text-text-strong">
-          {opponentLabel}
-        </span>
-      </LinkTd>
-      <LinkTd href={href} className="text-muted-strong">
-        {match.map_name ?? "—"}
-      </LinkTd>
-      <LinkTd href={href} className="text-muted">
-        {match.queue ?? match.mode ?? "—"}
-      </LinkTd>
-      <LinkTd href={href} className="text-muted tabular-nums">
-        {formatGameStart(match.game_start)}
-      </LinkTd>
-      <td className="px-4 py-2.5 text-right align-middle">
-        <VodCell url={match.vod_url} />
-      </td>
-    </tr>
-  );
-}
-
-/**
- * Table cell that wraps its content in a `Link` so the entire row navigates
- * to the match detail page. Using a single `<Link>` per `<tr>` is invalid
- * HTML, so we put the link in every cell instead.
- */
-function LinkTd({
-  href,
-  children,
-  className = "",
-}: {
-  href: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <td className="p-0 align-middle">
-      <Link href={href} className={`block px-4 py-2.5 ${className}`}>
-        {children}
-      </Link>
-    </td>
-  );
-}
-
-
-function Th({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <th className={`px-4 py-2 text-left font-semibold ${className}`}>{children}</th>
-  );
-}
-
-function Td({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return <td className={`px-4 py-2.5 align-middle ${className}`}>{children}</td>;
-}
-
-function EmptyState({ message }: { message: string }) {
-  return <p className="px-4 py-6 text-sm text-muted">{message}</p>;
-}

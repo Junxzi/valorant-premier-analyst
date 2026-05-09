@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from .persist_migrate import migrate_legacy_data  # noqa: E402
 from .routes import health, matches, players, sync, teams, vods
 from .scheduler import load_scheduler_config, periodic_sync_loop  # noqa: E402
 
@@ -33,7 +34,17 @@ def _allowed_origins() -> list[str]:
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage the background sync scheduler over the app's lifetime."""
+    """Manage startup-time migration + background sync scheduler."""
+    # First: copy any legacy `data/` files into `db/` so the persistent
+    # Volume picks them up. Idempotent — a no-op once data is already in
+    # the new location. Failures are logged inside migrate_legacy_data().
+    try:
+        report = migrate_legacy_data()
+        if any(report.values()):
+            logger.info("persist-migrate complete: %s", report)
+    except Exception as exc:  # noqa: BLE001 - never block startup
+        logger.warning("persist-migrate raised unexpectedly: %s", exc)
+
     cfg = load_scheduler_config()
     task: asyncio.Task[None] | None = None
     if cfg.enabled:

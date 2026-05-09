@@ -7,7 +7,11 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ...config import DEFAULT_ROSTER_HISTORY_PATH
+from ...config import (
+    DEFAULT_NOTES_DIR,
+    DEFAULT_ROSTER_HISTORY_PATH,
+    DEFAULT_STRATEGY_DIR,
+)
 from ...storage.roster_history import load_roster_history, member_records
 from ..deps import db_path, open_duckdb
 from ..schemas import (
@@ -34,6 +38,28 @@ router = APIRouter(prefix="/teams", tags=["teams"])
 
 def _winrate(wins: int, games: int) -> float:
     return round(100.0 * wins / games, 1) if games else 0.0
+
+
+def _time_filter(
+    since: int | None, until: int | None, alias: str = "m"
+) -> tuple[str, list[object]]:
+    """Build an ``AND`` SQL fragment that filters ``<alias>.game_start``.
+
+    Returns ``(sql, params)``. The fragment includes the leading ``AND ``
+    so callers can splice it directly after an existing ``WHERE`` clause.
+    Empty when both bounds are ``None``.
+    """
+    parts: list[str] = []
+    params: list[object] = []
+    if since is not None:
+        parts.append(f"{alias}.game_start >= ?")
+        params.append(since)
+    if until is not None:
+        parts.append(f"{alias}.game_start <= ?")
+        params.append(until)
+    if not parts:
+        return "", []
+    return "AND " + " AND ".join(parts), params
 
 
 def _current_member_keys(
@@ -324,6 +350,8 @@ def _round2(value: object) -> float | None:
 def get_team_stats(
     name: str,
     tag: str,
+    since: int | None = Query(default=None),
+    until: int | None = Query(default=None),
     path: Path = Depends(db_path),
 ) -> TeamStatsResponse:
     """Per-player aggregates (ACS, ADR, K/D, +/−) and team-wide agent usage.
@@ -331,16 +359,30 @@ def get_team_stats(
     Used by the `Stats` tab on the team page. Anonymized player names from
     very recent Premier matches are backfilled by looking the same ``puuid``
     up across the rest of the dataset.
+
+    Optional ``since`` / ``until`` Unix-second bounds restrict the
+    aggregates to matches inside that window (used by the season toggle).
     """
+    tf_sql, tf_params = _time_filter(since, until)
+    # The shared ``our_matches`` CTE is responsible for narrowing matches
+    # to this team within the optional season window. Every downstream
+    # query joins ``our_matches`` so they don't need their own filter.
+    our_matches_cte = f'''
+        our_matches AS (
+            SELECT mt.match_id, mt.team
+            FROM "match_teams" mt
+            JOIN "matches" m ON m.match_id = mt.match_id
+            WHERE mt.premier_team_name = ? AND mt.premier_team_tag = ? {tf_sql}
+        )
+    '''
+    om_params = [name, tag, *tf_params]
+
     with open_duckdb(path) as con:
         _ensure_team_seen(con, name, tag)
 
         totals = con.execute(
-            '''
-            WITH our_matches AS (
-                SELECT match_id FROM "match_teams"
-                WHERE premier_team_name = ? AND premier_team_tag = ?
-            ),
+            f'''
+            WITH {our_matches_cte},
             match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -351,17 +393,14 @@ def get_team_stats(
             FROM our_matches om
             LEFT JOIN match_rounds mr USING (match_id)
             ''',
-            [name, tag],
+            om_params,
         ).fetchone()
         total_games = int(totals[0] or 0)
         total_rounds = int(totals[1] or 0)
 
         player_rows = con.execute(
-            '''
-            WITH our_matches AS (
-                SELECT match_id, team FROM "match_teams"
-                WHERE premier_team_name = ? AND premier_team_tag = ?
-            ),
+            f'''
+            WITH {our_matches_cte},
             match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -404,7 +443,7 @@ def get_team_stats(
             GROUP BY mp.puuid, kn.name, kn.tag
             ORDER BY games DESC, avg_acs DESC NULLS LAST
             ''',
-            [name, tag],
+            om_params,
         ).fetchall()
         players = [
             TeamPlayerStat(
@@ -426,11 +465,8 @@ def get_team_stats(
         ]
 
         agent_rows = con.execute(
-            '''
-            WITH our_matches AS (
-                SELECT match_id, team FROM "match_teams"
-                WHERE premier_team_name = ? AND premier_team_tag = ?
-            ),
+            f'''
+            WITH {our_matches_cte},
             match_rounds AS (
                 SELECT match_id, SUM(rounds_won) AS total_rounds
                 FROM "match_teams" GROUP BY match_id
@@ -450,7 +486,7 @@ def get_team_stats(
             GROUP BY mp.agent
             ORDER BY games DESC, mp.agent
             ''',
-            [name, tag],
+            om_params,
         ).fetchall()
         agent_usage = [
             TeamAgentUsage(
@@ -481,6 +517,8 @@ def get_team_stats(
 def get_team_map_stats(
     name: str,
     tag: str,
+    since: int | None = Query(default=None),
+    until: int | None = Query(default=None),
     path: Path = Depends(db_path),
 ) -> TeamMapStatsResponse:
     """Per-map ATK/DEF round breakdown + agent compositions.
@@ -489,16 +527,27 @@ def get_team_map_stats(
     - bomb exploded (planted AND NOT defused) → attacker won that round
     - otherwise (no plant OR defused) → defender won that round
     Starting side is determined from round 1 of each match.
+
+    Optional ``since`` / ``until`` Unix-second bounds restrict the
+    aggregates to matches inside that window (used by the season toggle).
     """
+    tf_sql, tf_params = _time_filter(since, until)
+    # Variant of `tf_sql` aliased as `m2`, used in queries whose primary
+    # `matches` join uses the alias `m` and we need an inner `our_matches`
+    # CTE that joins the same table under a different alias.
+    tf_sql_m2, _ = _time_filter(since, until, alias="m2")
+    om_params = [name, tag, *tf_params]
+
     with open_duckdb(path) as con:
         _ensure_team_seen(con, name, tag)
 
         map_rows = con.execute(
-            """
+            f"""
             WITH our_matches AS (
-                SELECT match_id, team AS our_color, has_won
-                FROM "match_teams"
-                WHERE premier_team_name = ? AND premier_team_tag = ?
+                SELECT mt.match_id, mt.team AS our_color, mt.has_won
+                FROM "match_teams" mt
+                JOIN "matches" m ON m.match_id = mt.match_id
+                WHERE mt.premier_team_name = ? AND mt.premier_team_tag = ? {tf_sql}
             ),
             round_sides AS (
                 -- For each round, determine if OUR team was on ATK side.
@@ -545,16 +594,17 @@ def get_team_map_stats(
             GROUP BY m.map_name
             ORDER BY games DESC, m.map_name
             """,
-            [name, tag],
+            om_params,
         ).fetchall()
 
         # Agent compositions per map: sort agents alphabetically, count occurrences
         comp_rows = con.execute(
-            """
+            f"""
             WITH our_matches AS (
-                SELECT match_id, team AS our_color
-                FROM "match_teams"
-                WHERE premier_team_name = ? AND premier_team_tag = ?
+                SELECT mt.match_id, mt.team AS our_color
+                FROM "match_teams" mt
+                JOIN "matches" m2 ON m2.match_id = mt.match_id
+                WHERE mt.premier_team_name = ? AND mt.premier_team_tag = ? {tf_sql_m2}
             ),
             match_comps AS (
                 SELECT m.map_name, mp.match_id,
@@ -570,17 +620,18 @@ def get_team_map_stats(
             GROUP BY map_name, comp
             ORDER BY map_name, cnt DESC
             """,
-            [name, tag],
+            om_params,
         ).fetchall()
 
         # Per-match detail for expanded rows
         match_detail_rows = con.execute(
-            """
+            f"""
             WITH our_matches AS (
-                SELECT match_id, team AS our_color, has_won,
-                       rounds_won, rounds_lost
-                FROM "match_teams"
-                WHERE premier_team_name = ? AND premier_team_tag = ?
+                SELECT mt.match_id, mt.team AS our_color, mt.has_won,
+                       mt.rounds_won, mt.rounds_lost
+                FROM "match_teams" mt
+                JOIN "matches" m2 ON m2.match_id = mt.match_id
+                WHERE mt.premier_team_name = ? AND mt.premier_team_tag = ? {tf_sql_m2}
             ),
             round_sides AS (
                 SELECT
@@ -638,7 +689,7 @@ def get_team_map_stats(
             LEFT JOIN match_agents ma ON ma.match_id = om.match_id
             ORDER BY m.map_name, m.game_start DESC NULLS LAST
             """,
-            [name, tag],
+            om_params,
         ).fetchall()
 
         # Index comps by map_name → top 3
@@ -727,7 +778,7 @@ def get_team_map_stats(
 # Team notes — simple per-team markdown stored as flat files
 # ---------------------------------------------------------------------------
 
-_NOTES_DIR = Path(__file__).resolve().parents[4] / "data" / "notes"
+_NOTES_DIR = DEFAULT_NOTES_DIR
 
 
 def _note_path(name: str, tag: str) -> Path:
@@ -761,12 +812,25 @@ def put_team_note(name: str, tag: str, body: _NoteBody) -> _NoteBody:
 # Team strategy — per-map agent compositions stored as JSON files
 # ---------------------------------------------------------------------------
 
-_STRATEGY_DIR = Path(__file__).resolve().parents[4] / "data" / "strategy"
+_STRATEGY_DIR = DEFAULT_STRATEGY_DIR
+
+
+def _strategy_safe_stem(name: str, tag: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{name}__{tag}")
 
 
 def _strategy_path(name: str, tag: str) -> Path:
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{name}__{tag}")
-    return _STRATEGY_DIR / f"{safe}.json"
+    return _STRATEGY_DIR / f"{_strategy_safe_stem(name, tag)}.json"
+
+
+def _strategy_notes_path(name: str, tag: str) -> Path:
+    """Sibling file holding per-map markdown notes.
+
+    Stored separately from the agent-composition JSON so the legacy schema of
+    ``{team}__{tag}.json`` (which has just ``map → {player → agent}``) stays
+    intact and existing files keep parsing.
+    """
+    return _STRATEGY_DIR / f"{_strategy_safe_stem(name, tag)}.notes.json"
 
 
 class _StrategyBody(BaseModel):
@@ -776,21 +840,45 @@ class _StrategyBody(BaseModel):
     notes: dict[str, str] = {}
 
 
+def _read_json(path: Path) -> dict:
+    import json
+
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 @router.get("/{name}/{tag}/strategy", response_model=_StrategyBody)
 def get_team_strategy(name: str, tag: str) -> _StrategyBody:
-    """Return saved per-map agent compositions for a team."""
-    path = _strategy_path(name, tag)
-    if not path.exists():
-        return _StrategyBody(data={})
-    import json
-    return _StrategyBody(data=json.loads(path.read_text(encoding="utf-8")))
+    """Return saved per-map agent compositions and notes for a team."""
+    data = _read_json(_strategy_path(name, tag))
+    notes_raw = _read_json(_strategy_notes_path(name, tag))
+    notes = {k: v for k, v in notes_raw.items() if isinstance(k, str) and isinstance(v, str)}
+    return _StrategyBody(data=data, notes=notes)
 
 
 @router.put("/{name}/{tag}/strategy", response_model=_StrategyBody)
 def put_team_strategy(name: str, tag: str, body: _StrategyBody) -> _StrategyBody:
-    """Save per-map agent compositions for a team."""
+    """Save per-map agent compositions and notes for a team."""
     import json
-    path = _strategy_path(name, tag)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(body.data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    data_path = _strategy_path(name, tag)
+    notes_path = _strategy_notes_path(name, tag)
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    data_path.write_text(
+        json.dumps(body.data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    # Skip writing the notes sibling when there are none — keeps the
+    # directory clean for teams that haven't started taking notes yet.
+    if body.notes:
+        notes_path.write_text(
+            json.dumps(body.notes, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    elif notes_path.exists():
+        # Caller cleared all notes — remove the file so future GETs return {}.
+        notes_path.unlink()
     return body

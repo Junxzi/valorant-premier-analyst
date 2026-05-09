@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 export type TabSpec = {
   id: string;
@@ -11,6 +11,12 @@ export type TabSpec = {
 
 type Props = {
   tabs: TabSpec[];
+  /**
+   * Query-string keys to carry forward when the user clicks a tab.
+   * Defaults to `["season"]` so the V26A3 ↔ 全体 toggle stays sticky
+   * across Overview / Stats / Matches / Strategy / Playoffs.
+   */
+  preserveQueryKeys?: readonly string[];
 };
 
 /**
@@ -20,10 +26,21 @@ type Props = {
  * is the longest prefix of the current path wins. This keeps individual
  * pages free of "am I active?" boilerplate.
  */
-export function Tabs({ tabs }: Props) {
+export function Tabs({ tabs, preserveQueryKeys = ["season"] }: Props) {
   const pathname = usePathname() ?? "";
+  const searchParams = useSearchParams();
 
   const activeId = pickActive(tabs, pathname);
+
+  // Build a query suffix carrying forward selected keys (e.g. ?season=v26a3)
+  // so cross-tab navigation doesn't reset the active filter.
+  const carry = new URLSearchParams();
+  for (const key of preserveQueryKeys) {
+    const v = searchParams.get(key);
+    if (v != null) carry.set(key, v);
+  }
+  const carryStr = carry.toString();
+  const querySuffix = carryStr ? `?${carryStr}` : "";
 
   return (
     <nav className="border-b border-border">
@@ -33,7 +50,7 @@ export function Tabs({ tabs }: Props) {
           return (
             <li key={tab.id}>
               <Link
-                href={tab.href}
+                href={`${tab.href}${querySuffix}`}
                 className={`inline-flex h-9 items-center px-4 text-xs font-semibold uppercase tracking-wider transition-colors ${
                   active
                     ? "border-b-2 border-accent text-text-strong"

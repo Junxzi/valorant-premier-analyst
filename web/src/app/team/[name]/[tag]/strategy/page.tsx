@@ -5,25 +5,32 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { API_BASE_URL, type StrategyData } from "@/lib/api";
+import { API_BASE_URL, fetchTeam, type StrategyData } from "@/lib/api";
 import { agentIconUrl, roleClasses } from "@/lib/agents";
 import { mapThumbnailUrl, COMPETITIVE_MAPS } from "@/lib/maps";
+import { SeasonToggle, type SeasonFilter } from "@/components/SeasonToggle";
+import { V26A3 } from "@/lib/seasons";
 
 type Props = {
   params: Promise<{ name: string; tag: string }>;
 };
 
-const STRATEGY_PLAYERS = ["Curush", "Syachi", "BABYNOYEN", "にょにょ", "Tigerin0", "lisbeth"];
-
-type Season = "all" | "v26a3";
-
-const SEASON_OPTIONS: { value: Season; label: string }[] = [
-  { value: "all", label: "全体" },
-  { value: "v26a3", label: "V26A3" },
+/**
+ * Last-known active roster, used as a fallback while the API call is in
+ * flight or if the team endpoint is unreachable. The real player columns
+ * come from the team's current roster (`is_current=true`) so newly added
+ * members appear automatically without a code change.
+ */
+const FALLBACK_PLAYERS = [
+  "Curush",
+  "Syachi",
+  "BABYNOYEN",
+  "にょにょ",
+  "Tigerin0",
+  "lisbeth",
 ];
 
-// V26A3 schedule order (Split excluded per user request)
-const V26A3_MAPS: string[] = ["Ascent", "Lotus", "Breeze", "Pearl", "Haven", "Fracture"];
+const V26A3_MAPS: readonly string[] = V26A3.weeks.map((w) => w.map);
 
 const ROLE_GROUPS = [
   { label: "Duelist",    agents: ["Jett","Reyna","Raze","Phoenix","Neon","Yoru","Iso","Waylay"] },
@@ -37,8 +44,9 @@ export default function StrategyPage({ params }: Props) {
   const [tag, setTag] = useState("");
   const [comps, setComps] = useState<StrategyData>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [players, setPlayers] = useState<string[]>(FALLBACK_PLAYERS);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [season, setSeason] = useState<Season>("all");
+  const [season, setSeason] = useState<SeasonFilter>("all");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,6 +64,24 @@ export default function StrategyPage({ params }: Props) {
           setNotes(d.notes ?? {});
         })
         .catch(() => {});
+
+      // Pull the current roster so newly added members appear as columns
+      // without editing this file. Server marks departed players with
+      // is_current=false, and falls back to "true for all" when the
+      // history file is empty (older deployments) — both are handled.
+      fetchTeam(dn, dt, 1)
+        .then((team) => {
+          const current = team.roster
+            .filter((m) => m.is_current !== false && (m.name ?? "").trim().length > 0)
+            .sort((a, b) => b.games - a.games)
+            .map((m) => m.name as string);
+          if (current.length > 0) {
+            setPlayers(current);
+          }
+        })
+        .catch(() => {
+          // Keep FALLBACK_PLAYERS so the page is still usable offline.
+        });
     });
   }, [params]);
 
@@ -109,22 +135,7 @@ export default function StrategyPage({ params }: Props) {
       <div className="flex items-center gap-3">
         <h2 className="text-xs uppercase tracking-widest text-muted">Map Compositions</h2>
 
-        {/* Season dropdown */}
-        <div className="flex rounded-md border border-border overflow-hidden text-[11px] font-semibold uppercase tracking-wider">
-          {SEASON_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setSeason(opt.value)}
-              className={`px-3 py-1 transition-colors ${
-                season === opt.value
-                  ? "bg-accent text-bg-elevated"
-                  : "text-muted hover:text-text hover:bg-bg-elevated"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <SeasonToggle value={season} onChange={setSeason} />
 
         <div className="ml-auto text-[11px]">
           {saving && <span className="text-muted">保存中…</span>}
@@ -135,11 +146,14 @@ export default function StrategyPage({ params }: Props) {
       {/* Sticky column header */}
       <div
         className="sticky top-[44px] z-20 rounded-t-md border border-border bg-bg-elevated px-4 py-2"
-        style={{ display: "grid", gridTemplateColumns: "2rem 180px repeat(6, 1fr)" }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `2rem 180px repeat(${players.length}, 1fr)`,
+        }}
       >
         <span />
         <span className="text-[11px] uppercase tracking-wider text-muted">Map</span>
-        {STRATEGY_PLAYERS.map((p) => (
+        {players.map((p) => (
           <span key={p} className="text-[11px] uppercase tracking-wider text-muted text-center truncate px-1">
             {p}
           </span>
@@ -160,7 +174,9 @@ export default function StrategyPage({ params }: Props) {
               {/* Comp row */}
               <div
                 className="grid items-center px-4 py-3 gap-x-2"
-                style={{ gridTemplateColumns: "2rem 180px repeat(6, 1fr)" }}
+                style={{
+                  gridTemplateColumns: `2rem 180px repeat(${players.length}, 1fr)`,
+                }}
               >
                 {/* Expand toggle */}
                 <button
@@ -215,7 +231,7 @@ export default function StrategyPage({ params }: Props) {
                 </button>
 
                 {/* Agent selectors */}
-                {STRATEGY_PLAYERS.map((player) => (
+                {players.map((player) => (
                   <AgentSelector
                     key={player}
                     value={mapData[player] ?? null}

@@ -15,12 +15,22 @@ COPY src/ src/
 
 RUN pip install --no-cache-dir -e .
 
-# Copy initial data (DB + strategy/bios).
-# These are overridden at runtime by the mounted Volume on Railway.
+# All persistent state lives under /app/db (DuckDB + raw match archive +
+# strategy / notes / bios / vods / roster_history JSON). On Railway, mount
+# a Volume at /app/db to survive redeploys.
+#
+# We still COPY db/ and data/ into the image so a fresh container has seed
+# files: the lifespan migration in src/valorant_analyst/server/persist_migrate.py
+# moves anything from data/ into db/ on first start, and is idempotent
+# afterwards.
 COPY db/ db/
 COPY data/ data/
 
-RUN mkdir -p db data/raw data/strategy data/bios
+RUN mkdir -p \
+    db/raw/matches \
+    db/strategy \
+    db/notes \
+    db/bios
 
 # Default env (override via Railway env vars or docker-compose)
 ENV SERVER_HOST=0.0.0.0

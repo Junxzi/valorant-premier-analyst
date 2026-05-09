@@ -9,16 +9,39 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Legacy "data/" tree — kept around as a *seed* for fresh deployments and as
+# the source for one-shot migration into PERSIST_ROOT. New writes never go
+# here; see PERSIST_ROOT below.
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
-DB_DIR = PROJECT_ROOT / "db"
 REPORTS_DIR = PROJECT_ROOT / "reports"
 
-DEFAULT_DB_PATH = DB_DIR / "valorant.duckdb"
-DEFAULT_RAW_MATCHES_PATH = RAW_DIR / "latest_matches.json"
+# Single persistence root — everything that must survive a redeploy lives
+# here. On Railway this is mounted as a Volume at /app/db so a single mount
+# keeps the DuckDB database, raw match archive, strategy/notes/bios JSON,
+# vods, and roster history all persistent.
+DB_DIR = PROJECT_ROOT / "db"
+PERSIST_ROOT = DB_DIR
+
+DEFAULT_DB_PATH = PERSIST_ROOT / "valorant.duckdb"
+DEFAULT_RAW_MATCHES_PATH = RAW_DIR / "latest_matches.json"  # transient bundle, ok in data/
 DEFAULT_REPORT_PATH = REPORTS_DIR / "latest_report.md"
-DEFAULT_ROSTER_HISTORY_PATH = DATA_DIR / "roster_history.json"
+DEFAULT_ARCHIVE_DIR = PERSIST_ROOT / "raw" / "matches"
+DEFAULT_ROSTER_HISTORY_PATH = PERSIST_ROOT / "roster_history.json"
+DEFAULT_STRATEGY_DIR = PERSIST_ROOT / "strategy"
+DEFAULT_NOTES_DIR = PERSIST_ROOT / "notes"
+DEFAULT_BIOS_DIR = PERSIST_ROOT / "bios"
+DEFAULT_VODS_PATH = PERSIST_ROOT / "vods.json"
+
+# Legacy paths — only read for the one-shot migration on server startup.
+LEGACY_ARCHIVE_DIR = RAW_DIR / "matches"
+LEGACY_ROSTER_HISTORY_PATH = DATA_DIR / "roster_history.json"
+LEGACY_STRATEGY_DIR = DATA_DIR / "strategy"
+LEGACY_NOTES_DIR = DATA_DIR / "notes"
+LEGACY_BIOS_DIR = DATA_DIR / "bios"
+LEGACY_VODS_PATH = DATA_DIR / "vods.json"
 
 
 class ConfigError(RuntimeError):

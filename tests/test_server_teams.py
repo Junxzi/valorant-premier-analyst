@@ -219,3 +219,45 @@ def test_team_stats_endpoint_includes_agent_usage(client: TestClient) -> None:
 def test_team_stats_endpoint_404_for_unknown_team(client: TestClient) -> None:
     res = client.get("/api/teams/Ghost/GHST/stats")
     assert res.status_code == 404
+
+
+# ----------------------------- season time filter ---------------------------
+
+
+def test_team_stats_endpoint_filters_by_since(client: TestClient) -> None:
+    """`since` should restrict the aggregate to matches inside the window."""
+    # Match m1 has game_start = 1700000000, m2 has 1700001000.
+    # since=1700000500 should drop m1 entirely.
+    res = client.get("/api/teams/MyTeam/MTM/stats?since=1700000500")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_games"] == 1
+    # Only m2's rounds should be summed (13 + 11 = 24).
+    assert body["total_rounds"] == 24
+    players = {p["puuid"]: p for p in body["players"]}
+    # Alice's m1 stats should be excluded.
+    assert players["p1"]["games"] == 1
+    # Bob never played m2, so he disappears entirely under the filter.
+    assert "p2" not in players
+
+
+def test_team_stats_endpoint_filters_by_until(client: TestClient) -> None:
+    """`until` should drop matches after the upper bound."""
+    res = client.get("/api/teams/MyTeam/MTM/stats?until=1700000500")
+    body = res.json()
+    assert body["total_games"] == 1  # only m1 survives
+    players = {p["puuid"]: p for p in body["players"]}
+    assert players["p1"]["games"] == 1
+    assert players["p2"]["games"] == 1
+
+
+def test_team_stats_endpoint_empty_window_yields_zeroes(client: TestClient) -> None:
+    """A window with no matches should aggregate cleanly to zero."""
+    res = client.get(
+        "/api/teams/MyTeam/MTM/stats?since=1900000000&until=1900001000",
+    )
+    body = res.json()
+    assert body["total_games"] == 0
+    assert body["total_rounds"] == 0
+    assert body["players"] == []
+    assert body["agent_usage"] == []

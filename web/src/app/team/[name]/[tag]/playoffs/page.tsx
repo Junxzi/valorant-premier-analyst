@@ -2,13 +2,13 @@ import { notFound } from "next/navigation";
 
 import { ApiError, fetchTeamMatches } from "@/lib/api";
 
-import { MatchesTable } from "./MatchesTable";
+import { PlayoffStatus } from "./PlayoffStatus";
 
 type PageProps = {
   params: Promise<{ name: string; tag: string }>;
 };
 
-export default async function TeamMatchesPage({ params }: PageProps) {
+export default async function TeamPlayoffsPage({ params }: PageProps) {
   const { name: rawName, tag: rawTag } = await params;
   const name = decodeURIComponent(rawName);
   const tag = decodeURIComponent(rawTag);
@@ -21,5 +21,5 @@ export default async function TeamMatchesPage({ params }: PageProps) {
     throw e;
   }
 
-  return <MatchesTable matches={data.matches} totalAll={data.total} />;
+  return <PlayoffStatus matches={data.matches} />;
 }

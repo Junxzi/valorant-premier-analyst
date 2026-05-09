@@ -21,21 +21,28 @@ import type {
   PlayerAgentStat,
   PlayerMapStat,
   PlayerMatchEntry,
-  PlayerSummary,
   PlayerTeamAffiliation,
 } from "@/lib/api";
+import { seasonWindowUnixSec } from "@/lib/seasons";
+import { readSeasonFromSearchParams } from "@/lib/useSeasonQuery";
+
+import { PlayerSummaryRow } from "./PlayerSummaryRow";
 
 type PageProps = {
   params: Promise<{ puuid: string }>;
+  searchParams: Promise<{ season?: string | string[] }>;
 };
 
-export default async function PlayerPage({ params }: PageProps) {
+export default async function PlayerPage({ params, searchParams }: PageProps) {
   const { puuid: rawPuuid } = await params;
   const puuid = decodeURIComponent(rawPuuid);
+  const { season: rawSeason } = await searchParams;
+  const season = readSeasonFromSearchParams(rawSeason);
+  const window = seasonWindowUnixSec(season) ?? undefined;
 
   let data;
   try {
-    data = await fetchPlayer(puuid, 30);
+    data = await fetchPlayer(puuid, 30, window);
   } catch (e) {
     if (e instanceof ApiError && e.kind === "not_found") notFound();
     if (e instanceof ApiError && e.kind === "network") {
@@ -56,10 +63,11 @@ export default async function PlayerPage({ params }: PageProps) {
         currentTeam={data.current_team}
         bio={<PlayerBio puuid={data.puuid} playerLabel={playerLabel} />}
       />
+      <PlayerSummaryRow summary={data.summary} />
       {data.teams.length > 1 && <TeamAffiliations rows={data.teams} />}
       <AgentsDetailTable rows={data.agents} totalGames={data.summary.games} />
       <MapStats rows={data.maps} />
-      <RecentMatches matches={data.recent_matches} />
+      <RecentMatches matches={data.recent_matches} season={season} />
     </div>
   );
 }
@@ -123,80 +131,22 @@ function PlayerHeader({
   );
 }
 
-function SummaryRow({ summary }: { summary: PlayerSummary }) {
-  const tiles = [
-    { label: "Games", value: String(summary.games) },
-    {
-      label: "Winrate",
-      value: formatPercent(summary.winrate_pct, 1),
-      tone:
-        summary.winrate_pct >= 50
-          ? ("win" as const)
-          : summary.games > 0
-            ? ("loss" as const)
-            : undefined,
-    },
-    { label: "Avg ACS", value: formatNumber(summary.avg_acs, 0) },
-    {
-      label: "K/D",
-      value: formatNumber(summary.kd_ratio, 2),
-      tone:
-        summary.kd_ratio == null
-          ? undefined
-          : summary.kd_ratio >= 1
-            ? ("win" as const)
-            : ("loss" as const),
-    },
-    { label: "Avg ADR", value: formatNumber(summary.avg_adr, 0) },
-    {
-      label: "+/-",
-      value:
-        summary.avg_plus_minus == null
-          ? "-"
-          : `${summary.avg_plus_minus > 0 ? "+" : ""}${summary.avg_plus_minus.toFixed(1)}`,
-      tone:
-        summary.avg_plus_minus == null
-          ? undefined
-          : summary.avg_plus_minus > 0
-            ? ("win" as const)
-            : summary.avg_plus_minus < 0
-              ? ("loss" as const)
-              : undefined,
-    },
-  ];
-
+function RecentMatches({
+  matches,
+  season,
+}: {
+  matches: PlayerMatchEntry[];
+  season: "all" | "v26a3";
+}) {
+  const seasonLabel = season === "all" ? "" : ` · ${season.toUpperCase()}`;
+  const emptyMessage =
+    season === "all"
+      ? "No match data found."
+      : `${season.toUpperCase()} の試合データがありません。`;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      {tiles.map((t) => (
-        <div
-          key={t.label}
-          className="rounded-md border border-border bg-panel px-4 py-3"
-        >
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-            {t.label}
-          </p>
-          <p
-            className={`mt-1 text-2xl font-semibold tabular-nums ${
-              t.tone === "win"
-                ? "text-win"
-                : t.tone === "loss"
-                  ? "text-loss"
-                  : "text-text-strong"
-            }`}
-          >
-            {t.value}
-          </p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RecentMatches({ matches }: { matches: PlayerMatchEntry[] }) {
-  return (
-    <Card title={`Recent Matches (${matches.length})`} flush>
+    <Card title={`Recent Matches (${matches.length})${seasonLabel}`} flush>
       {matches.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-muted">No match data found.</p>
+        <p className="px-4 py-6 text-sm text-muted">{emptyMessage}</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">

@@ -39,11 +39,11 @@ from .analysis.roster import (
 from .api.henrik_client import HenrikAPIError, HenrikClient
 from .config import (
     DB_DIR,
+    DEFAULT_ARCHIVE_DIR,
     DEFAULT_DB_PATH,
     DEFAULT_RAW_MATCHES_PATH,
     DEFAULT_REPORT_PATH,
     DEFAULT_ROSTER_HISTORY_PATH,
-    RAW_DIR,
     AppConfig,
     ConfigError,
     load_config,
@@ -83,8 +83,6 @@ from .storage.roster_history import (
 )
 
 logger = logging.getLogger("valorant_analyst")
-
-DEFAULT_ARCHIVE_DIR = RAW_DIR / "matches"
 
 MATCHES_TABLE = "matches"
 PLAYERS_TABLE = "match_players"

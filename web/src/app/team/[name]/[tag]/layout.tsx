@@ -2,9 +2,10 @@ import { notFound } from "next/navigation";
 import Image from "next/image";
 
 import { Tabs } from "@/components/Tabs";
-import { ApiError, fetchTeam } from "@/lib/api";
+import { ApiError, fetchTeam, fetchTeamMatches } from "@/lib/api";
 import { getTeamIcon } from "@/lib/teamConfig";
-import { formatPercent } from "@/lib/format";
+
+import { TeamHeaderRecord } from "./TeamHeaderRecord";
 
 type Props = {
   params: Promise<{ name: string; tag: string }>;
@@ -14,9 +15,9 @@ type Props = {
 /**
  * Shared chrome for the three team tabs (Overview / Matches / Stats).
  *
- * The layout fetches the lightweight team record so the header stays in
- * sync across tabs without each page having to re-render it. Tab pages
- * fetch their own detailed data on top.
+ * The layout fetches the team record + full match list so the header
+ * stays in sync across tabs and reacts to the `?season=` toggle. Tab
+ * pages fetch their own detailed data on top.
  */
 export default async function TeamLayout({ params, children }: Props) {
   const { name: rawName, tag: rawTag } = await params;
@@ -24,9 +25,14 @@ export default async function TeamLayout({ params, children }: Props) {
   const tag = decodeURIComponent(rawTag);
 
   let record;
+  let matches;
   try {
-    const team = await fetchTeam(name, tag, 1);
+    const [team, matchList] = await Promise.all([
+      fetchTeam(name, tag, 1),
+      fetchTeamMatches(name, tag),
+    ]);
     record = team.record;
+    matches = matchList.matches;
   } catch (e) {
     if (e instanceof ApiError) {
       if (e.kind === "not_found") notFound();
@@ -42,6 +48,7 @@ export default async function TeamLayout({ params, children }: Props) {
     { id: "stats", label: "Stats", href: `${base}/stats` },
     { id: "matches", label: "Matches", href: `${base}/matches` },
     { id: "strategy", label: "Strategy", href: `${base}/strategy` },
+    { id: "playoffs", label: "Playoffs", href: `${base}/playoffs` },
   ];
 
   return (
@@ -65,14 +72,7 @@ export default async function TeamLayout({ params, children }: Props) {
               </h1>
               <span className="text-lg font-medium text-muted">#{tag}</span>
             </div>
-            <p className="mt-1 text-sm text-muted tabular-nums">
-              {record.games} games · {record.wins}W – {record.losses}L
-              {record.games > 0 && (
-                <span className="ml-2 text-muted-strong">
-                  ({formatPercent(record.winrate_pct, 1)})
-                </span>
-              )}
-            </p>
+            <TeamHeaderRecord overallRecord={record} matches={matches} />
           </div>
         </div>
       </section>
