@@ -1,0 +1,63 @@
+{
+  "teams": {
+    "120pingがIGL#120": {
+      "last_synced_at": "2026-05-09T19:46:24.691998+00:00",
+      "members": [
+        {
+          "first_seen_at": "2026-05-09T19:44:44.899770+00:00",
+          "is_current": true,
+          "last_seen_at": "2026-05-09T19:46:24.691998+00:00",
+          "name": "Curush",
+          "puuid": "cbeb3493-299b-52f1-afb0-6fb54740bcec",
+          "source": "match_players",
+          "tag": "2580"
+        },
+        {
+          "first_seen_at": "2026-05-09T19:44:44.899770+00:00",
+          "is_current": true,
+          "last_seen_at": "2026-05-09T19:46:24.691998+00:00",
+          "name": "BABYNOYEN",
+          "puuid": "b6116b2e-cd92-5484-abe9-afa1f8ea5889",
+          "source": "match_players",
+          "tag": "jun"
+        },
+        {
+          "first_seen_at": "2026-05-09T19:44:44.899770+00:00",
+          "is_current": true,
+          "last_seen_at": "2026-05-09T19:46:24.691998+00:00",
+          "name": "Syachi",
+          "puuid": "9475cd46-bb6f-5366-b225-68f31f97f3d3",
+          "source": "match_players",
+          "tag": "vlrt"
+        },
+        {
+          "first_seen_at": "2026-05-09T19:44:44.899770+00:00",
+          "is_current": true,
+          "last_seen_at": "2026-05-09T19:46:24.691998+00:00",
+          "name": "Tigerin0",
+          "puuid": "fd97d528-2166-55c0-b1a1-b26e856221e6",
+          "source": "match_players",
+          "tag": "Tiger"
+        },
+        {
+          "first_seen_at": "2026-05-09T19:44:44.899770+00:00",
+          "is_current": true,
+          "last_seen_at": "2026-05-09T19:46:24.691998+00:00",
+          "name": "lisbeth",
+          "puuid": "b00cda07-e0b9-5e21-a113-8b42448fe844",
+          "source": "match_players",
+          "tag": "2580"
+        },
+        {
+          "first_seen_at": "2026-05-09T19:44:44.899770+00:00",
+          "is_current": true,
+          "last_seen_at": "2026-05-09T19:46:24.691998+00:00",
+          "name": "にょにょ",
+          "puuid": "2e5e8d6a-b51e-5912-8689-a7a0c8e2abad",
+          "source": "match_players",
+          "tag": "いたち"
+        }
+      ]
+    }
+  }
+}

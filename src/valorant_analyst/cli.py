@@ -504,6 +504,45 @@ def cmd_team_backfill(
             )
 
 
+def cmd_team_sync(
+    config: AppConfig,
+    archive_dir: Path,
+    db_path: Path,
+    history_path: Path,
+    *,
+    sleep_seconds: float,
+    max_matches: int | None,
+    rebuild_players: bool = False,
+) -> None:
+    """End-to-end Premier sync: ``team-backfill`` then ``ingest --from-archive``.
+
+    Composed shortcut used both by the CLI and the FastAPI scheduler so a
+    single command keeps DuckDB up to date with the team's official matches.
+    Roster history is refreshed automatically as part of ``team-backfill``.
+    """
+    logger.info("team-sync: step 1/2 — team-backfill")
+    cmd_team_backfill(
+        config,
+        archive_dir,
+        db_path,
+        history_path,
+        sleep_seconds=sleep_seconds,
+        max_matches=max_matches,
+    )
+
+    logger.info("team-sync: step 2/2 — ingest --from-archive")
+    cmd_ingest(
+        DEFAULT_RAW_MATCHES_PATH,
+        archive_dir,
+        db_path,
+        use_archive=True,
+        premier_only=True,
+        rebuild_players=rebuild_players,
+    )
+
+    logger.info("team-sync: done")
+
+
 def _read_match_players(db_path: Path) -> pd.DataFrame:
     if not db_path.exists():
         raise FileNotFoundError(
@@ -783,22 +822,21 @@ def cmd_roster_sync(
     if scan_db:
         db_entries = _scan_team_members_from_db(db_path, team_name, team_tag)
         logger.info("roster-sync: db_scan recovered %d puuid(s)", len(db_entries))
+        # If the API gave us a real roster, treat new DB-scan entries as
+        # *not current* — anyone the API didn't list shouldn't be promoted
+        # to "active" just because they show up in old matches. But when the
+        # API returned nothing (empty `data.member` is a common HenrikDev
+        # quirk for newly-enrolled teams), the DB scan is our only signal
+        # for who is on the roster, so default to is_current=True.
+        db_default_current = not bool(api_entries)
         db_report = merge_team_members(
             history,
             team_name,
             team_tag,
             db_entries,
             source="match_players",
-            # The DB scan is *additive*: a puuid that no longer plays for the
-            # team simply won't appear, but they shouldn't be marked inactive
-            # by the scan itself (the API call above already handled that).
             mark_missing_inactive=False,
-            # The DB only proves "this puuid played here at some point", which
-            # is not authoritative for active-roster membership. The API call
-            # above is the source of truth for is_current; if it confirmed
-            # this player they'll already be marked active and this merge
-            # leaves them alone.
-            default_is_current=False,
+            default_is_current=db_default_current,
         )
 
     save_roster_history(history, history_path)
@@ -949,13 +987,16 @@ def build_parser() -> argparse.ArgumentParser:
             "roster-sync",
             "team-info",
             "team-backfill",
+            "team-sync",
         ],
         help=(
             "fetch / ingest / backfill / status / run / report; "
             "team-info, team-backfill (Premier team API: official roster + "
-            "league_matches); roster-discover, roster-matches (analyze who "
-            "played together); roster-sync (merge API + DB into "
-            "data/roster_history.json so departed members stick around)."
+            "league_matches); team-sync (team-backfill + ingest --from-archive "
+            "in one shot, used by the FastAPI auto-sync scheduler); "
+            "roster-discover, roster-matches (analyze who played together); "
+            "roster-sync (merge API + DB into data/roster_history.json so "
+            "departed members stick around)."
         ),
     )
     parser.add_argument(
@@ -1171,6 +1212,16 @@ def main(argv: list[str] | None = None) -> int:
                 args.roster_history_path,
                 sleep_seconds=args.sleep_seconds,
                 max_matches=args.max_matches,
+            )
+        elif args.command == "team-sync":
+            cmd_team_sync(
+                config,
+                args.archive_dir,
+                args.db_path,
+                args.roster_history_path,
+                sleep_seconds=args.sleep_seconds,
+                max_matches=args.max_matches,
+                rebuild_players=args.rebuild_players,
             )
         else:  # pragma: no cover - argparse already restricts choices
             parser.error(f"Unknown command: {args.command}")

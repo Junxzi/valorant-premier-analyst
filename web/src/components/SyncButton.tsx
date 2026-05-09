@@ -11,6 +11,7 @@ type SyncStatus = {
   last_finished_at: string | null;
   last_status: "ok" | "error" | null;
   last_log: string;
+  last_trigger?: "manual" | "scheduled" | null;
 };
 
 export function SyncButton() {
@@ -139,10 +140,19 @@ export function SyncButton() {
       {!running && finishedAt && (
         <button
           onClick={() => setShowLog((v) => !v)}
-          title="最終同期ログを見る"
-          className={`text-[10px] tabular-nums ${lastOk ? "text-win" : "text-loss"}`}
+          title={
+            status?.last_trigger === "scheduled"
+              ? "最終同期は自動実行（15分ごと）。クリックでログ表示。"
+              : "最終同期は手動実行。クリックでログ表示。"
+          }
+          className={`flex items-center gap-1 text-[10px] tabular-nums ${lastOk ? "text-win" : "text-loss"}`}
         >
-          {lastOk ? "✓" : "✗"} {finishedAt}
+          <span>{lastOk ? "✓" : "✗"} {finishedAt}</span>
+          {status?.last_trigger && (
+            <span className="rounded-sm border border-border/60 px-1 text-[9px] uppercase tracking-wider text-muted">
+              {status.last_trigger === "scheduled" ? "auto" : "manual"}
+            </span>
+          )}
         </button>
       )}
 

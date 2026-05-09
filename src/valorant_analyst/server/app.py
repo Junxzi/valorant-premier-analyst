@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,6 +18,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from .routes import health, matches, players, sync, teams, vods
+from .scheduler import load_scheduler_config, periodic_sync_loop  # noqa: E402
+
+logger = logging.getLogger("valorant_analyst.server")
 
 
 def _allowed_origins() -> list[str]:
@@ -22,6 +29,33 @@ def _allowed_origins() -> list[str]:
         "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003",
     )
     return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage the background sync scheduler over the app's lifetime."""
+    cfg = load_scheduler_config()
+    task: asyncio.Task[None] | None = None
+    if cfg.enabled:
+        task = asyncio.create_task(
+            periodic_sync_loop(cfg.interval_seconds, cfg.initial_delay_seconds),
+            name="sync-scheduler",
+        )
+    else:
+        logger.warning(
+            "Auto-sync scheduler disabled (%s). Set SYNC_AUTO_ENABLED=1 and "
+            "ensure HENRIK_API_KEY / PREMIER_TEAM_NAME / PREMIER_TEAM_TAG are "
+            "configured to enable it.",
+            cfg.disabled_reason,
+        )
+
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def create_app() -> FastAPI:
@@ -33,6 +67,7 @@ def create_app() -> FastAPI:
             "vlr.gg-style Premier team dashboard backend. All endpoints "
             "live under /api and read from a local DuckDB file."
         ),
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,

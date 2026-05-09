@@ -38,7 +38,8 @@ DuckDB upsert (db/valorant.duckdb)
 | `storage/roster_history.py` | `data/roster_history.json` の永続化と API/DB 由来メンバーのマージ |
 | `processing/normalize.py` | `filter_premier` + `matches`/`match_players` 正規化 |
 | `analysis/roster.py` | ロスター解析（discover / matches / payload フィルタ / Premier API メンバー抽出） |
-| `cli.py` | `fetch` / `ingest` / `backfill` / `status` / `run` / `report` / `team-info` / `team-backfill` / `roster-discover` / `roster-matches` / `roster-sync` |
+| `cli.py` | `fetch` / `ingest` / `backfill` / `status` / `run` / `report` / `team-info` / `team-backfill` / `team-sync` / `roster-discover` / `roster-matches` / `roster-sync` |
+| `server/scheduler.py` | FastAPI lifespan が起動する asyncio 定期ジョブ（既定 15 分ごとに `team-sync`） |
 
 > `analysis/metrics.py` と `reporting/markdown_report.py` は **任意の `report` コマンド専用**として残してありますが、データ基盤の中心ではありません。
 
@@ -338,6 +339,23 @@ curl "http://127.0.0.1:8000/api/teams/<TEAM_NAME>/<TEAM_TAG>"
 ```
 
 OpenAPI ドキュメントは `http://127.0.0.1:8000/docs` で確認できます。
+
+#### 自動同期（バックグラウンドスケジューラ）
+
+サーバ起動時に **既定 15 分ごとに `team-sync`（= `team-backfill` + `ingest --from-archive`）が自動実行**されます。これによりダッシュボードを開きっぱなしにしておけば、新しい Premier 試合が Henrik 側に上がり次第 DuckDB に取り込まれて反映されます。
+
+- 手動で `POST /api/sync` を叩いた場合と**同じパイプライン・同じロック**を共有するので、ボタン同期と自動同期は重複しません（実行中なら片方は skip）。
+- 状態は `GET /api/sync` で取得でき、`last_trigger` で `manual` / `scheduled` を区別できます。フロントの SyncButton に小さな `auto` / `manual` バッジが出ます。
+
+設定 (`.env`):
+
+```env
+SYNC_AUTO_ENABLED=1                 # 0 で無効化
+SYNC_AUTO_INTERVAL_MINUTES=15       # 何分間隔か
+SYNC_AUTO_INITIAL_DELAY_SECONDS=30  # 起動直後の初回実行を遅らせる秒数
+```
+
+`HENRIK_API_KEY` / `PREMIER_TEAM_NAME` / `PREMIER_TEAM_TAG` のいずれかが空だと自動的に無効化され、起動ログに警告が出ます。**`UVICORN_WORKERS=1` 前提**（複数ワーカーだとプロセスごとに重複起動するので注意）。
 
 提供エンドポイント:
 

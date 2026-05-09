@@ -272,6 +272,30 @@ def test_cmd_roster_sync_scan_db_recovers_departed(
     assert records["p-bob"].is_current is False
 
 
+def test_cmd_roster_sync_scan_db_promotes_when_api_returned_nothing(
+    tmp_path: Path, patch_client
+) -> None:
+    """When the API returns 0 members (common right after enrollment), the DB
+    scan is the only signal we have for who is on the roster — treat newly
+    discovered DB members as is_current=True so the dashboard isn't empty."""
+    history_path = tmp_path / "rh.json"
+    db = tmp_path / "test.duckdb"
+    _seed_db_with_team(db)
+
+    patch_client({"data": {"member": []}})  # API returned nothing
+
+    cmd_roster_sync(_config(), db, history_path, scan_db=True)
+
+    records = {
+        r.puuid: r
+        for r in member_records(load_roster_history(history_path), TEAM_NAME, TEAM_TAG)
+    }
+    assert set(records) == {"p-alice", "p-bob"}
+    for rec in records.values():
+        assert rec.is_current is True
+        assert rec.source == "match_players"
+
+
 def test_cmd_roster_sync_continues_when_api_errors(
     tmp_path: Path, patch_client
 ) -> None:
